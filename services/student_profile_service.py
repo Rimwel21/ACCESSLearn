@@ -3,15 +3,25 @@ from sqlalchemy.orm import Session
 from utils.enum import RoleEnum
 from models.accounts import Accounts
 from models.student_profile import StudentProfile
-from models.file_upload import FileUpload
 from schemas.student_profile_schema import StudentProfileCreate, StudentProfileUpdate
 
+def get_student_profile(request: Request, db: Session, current_user: Accounts):
+    if current_user.role != RoleEnum.student:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Student only")
+    
+    student_profile = db.query(StudentProfile).filter(StudentProfile.account_id == current_user.id).first()
+
+    if not student_profile:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="Student profile not found!")
+    
+    return student_profile
 
 def create_student_profile(request: Request, student: StudentProfileCreate, db: Session, current_user: Accounts):
     if current_user.role != RoleEnum.student:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Student only")
     
     existing_profile = db.query(StudentProfile).filter(StudentProfile.account_id == current_user.id).first()
+    
 
     if existing_profile:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Student profile already exists")
@@ -50,13 +60,6 @@ def update_student_profile(request: Request,update: StudentProfileUpdate, db: Se
 
     return student_profile
     
-async def get_student_profile(request: Request, db: Session, current_user: Accounts):
-    if current_user.role != RoleEnum.student:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Student only")
-    
-    student_profile = db.query(StudentProfile).filter(StudentProfile.account_id == current_user.id).first()
 
-    if not student_profile:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student profile not found")
     
 

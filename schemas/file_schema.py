@@ -13,3 +13,10 @@ class FileOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+class Image_Profile(BaseModel):
+    file_url: str
+    file_category: FileCategory
+
+    class Config:
+        from_attributes = True

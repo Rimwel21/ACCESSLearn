@@ -8,6 +8,23 @@ from utils.enum import FileCategory, RoleEnum
 from models.student_profile import StudentProfile
 from models.teacher_profile import TeacherProfile
 
+# get image profile
+async def get_image_profile(request: Request, db: Session, current_user: Accounts):
+    if not current_user:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User not authorized")
+    
+    profile_image = db.query(FileUpload).filter(FileUpload.owner_id == current_user.id, 
+    FileUpload.file_category == FileCategory.PROFILE_IMAGE).first()
+
+    if not profile_image:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image not found")
+    
+    return {
+        "file_url": profile_image.file_url,
+        "file_category": profile_image.file_category
+    }
+
+   
 # image upload and update
 async def upload_image_profile(request: Request, image: UploadFile, db:Session, current_user: Accounts):
     if current_user.role == RoleEnum.student:
@@ -65,7 +82,9 @@ async def upload_image_profile(request: Request, image: UploadFile, db:Session, 
         db.refresh(profile)
 
         return new_file
+    
 
+    # upload pic can override old pic
     old_public_id = profile_image.public_id
 
     profile_image.filename = image.filename

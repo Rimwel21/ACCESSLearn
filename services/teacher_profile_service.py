@@ -5,6 +5,18 @@ from models.accounts import Accounts
 from models.teacher_profile import TeacherProfile
 from schemas.teacher_profile_schema import TeacherProfileCreate, TeacherProfileUpdate
 
+# get teacher profile
+def get_teacher_profile(request: Request, db: Session, current_user: Accounts):
+    if current_user.role != RoleEnum.teacher:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Teacher only")
+    
+    teacher_profile = db.query(TeacherProfile).filter(TeacherProfile.account_id == current_user.id).first()
+
+    if not teacher_profile:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Teacher profile not found")
+    
+    return teacher_profile
+
 def create_teacher_profile(request: Request, teacher: TeacherProfileCreate, db: Session, current_user: Accounts):
     if current_user.role != RoleEnum.teacher:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Teacher only")
