@@ -104,7 +104,6 @@ async def upload_image_profile(request: Request, image: UploadFile, db:Session, 
 
     return profile_image
 
-
 # delete image profile
 async def delete_image_profile(request: Request, db: Session, current_user: Accounts):
     if current_user.role == RoleEnum.student:

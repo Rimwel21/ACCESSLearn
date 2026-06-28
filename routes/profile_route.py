@@ -68,7 +68,7 @@ def update_student_profile_route(request: Request, update: StudentProfileUpdate,
     )
 
 # get teacher profile
-@router.get("/teacher/get_profile")
+@router.get("/teacher/get_profile", response_model=TeacherProfileOut)
 @limiter.limit("5/minute")
 def get_teacher_profile_route(request: Request, db: Session = Depends(get_db), current_user: Accounts = Depends(get_current_user)):
     return get_teacher_profile(
@@ -90,7 +90,7 @@ def create_teacher_profile_route(request: Request, teacher: TeacherProfileCreate
     )
 
 # teacher profile update
-@router.post("/teacher/update")
+@router.patch("/teacher/update", response_model=TeacherProfileOut)
 @limiter.limit("5/minute")
 def update_teacher_profile_route(request: Request, update: TeacherProfileUpdate, db: Session = Depends(get_db), current_user: Accounts = Depends(get_current_user)):
     return update_teacher_profile(

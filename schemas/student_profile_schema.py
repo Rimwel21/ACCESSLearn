@@ -1,9 +1,13 @@
 from pydantic import BaseModel
-from utils.enum import StudentType
+from utils.enum import StudentType, GradeLevel, UserSex
 from datetime import datetime
 
 class StudentProfileBase(BaseModel):
     name: str
+    age: int
+    sex: UserSex
+    grade_level: GradeLevel
+    section: str
     student_type: StudentType
     guardians_name: str | None = None
     guardians_contact_no: str | None = None
@@ -14,6 +18,10 @@ class StudentProfileCreate(StudentProfileBase):
 
 class StudentProfileUpdate(BaseModel):
     name: str | None = None
+    age: int | None = None
+    sex: UserSex | None = None
+    grade_level: GradeLevel | None = None
+    section: str | None = None
     student_type: StudentType | None = None
     guardians_name: str | None = None
     guardians_contact_no: str | None = None
@@ -22,6 +30,10 @@ class StudentProfileUpdate(BaseModel):
 class StudentProfileOut(BaseModel):
     id: int
     name: str
+    age: int
+    sex: UserSex
+    grade_level: GradeLevel
+    section: str
     student_type: StudentType
     account_id: int
     profile_image_id: int | None = None

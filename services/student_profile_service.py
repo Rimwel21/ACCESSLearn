@@ -28,6 +28,10 @@ def create_student_profile(request: Request, student: StudentProfileCreate, db: 
 
     new_student_profile = StudentProfile(
         name=student.name,
+        age=student.age,
+        sex=student.sex,
+        grade_level=student.grade_level,
+        section=student.section,
         account_id=current_user.id,
         profile_image_id=None,
         student_type=student.student_type,

@@ -23,7 +23,7 @@ class Accounts(Base):
     # one to one relationship sa student profile table
     student_profile = relationship("StudentProfile", back_populates="student_account", passive_deletes=True, uselist=False)
 
-    # student/teacher(owner_id) file relationship one to many
+    # teacher(owner_id) file relationship one to many for learning materials
     files = relationship("FileUpload", back_populates="account", passive_deletes=True)
 
     # one to one relationship sa teacher profile table
