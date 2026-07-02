@@ -1,13 +1,50 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 from datetime import datetime
 from utils.enum import RoleEnum
 
 
 class AccountRegister(BaseModel):
     username: str | None = Field(None, min_length=5, max_length=50)
-    email: EmailStr | None = Field(None, min_length=5, max_length=50)
+    email: EmailStr | None = None
     password: str = Field(min_length=8, max_length=30)
     role: RoleEnum
+
+    @model_validator(mode="before")
+    @classmethod
+    def sanitize_inputs(cls, data):
+        if not isinstance(data, dict):
+            return data
+        
+        fields = [
+            "username",
+            "email",
+            "password"
+        ]
+
+        for field in fields:
+            value = data.get(field)
+
+            if isinstance(value, str):
+                data[field] = value.strip()
+
+        return data
+    
+    @model_validator(mode="after")
+    def validate_password(self):
+
+        if self.password.lower() == self.username.lower():
+            raise ValueError("password must not be the same as username")
+        
+        return self
+
+    @field_validator("username")
+    @classmethod
+    def validate_username(cls, value:str):
+        if not value[0].isupper():
+            raise ValueError("Invalid format. Use one uppercase at the beginning.")
+        
+        return value
+    
 
 class AccountLogin(BaseModel):
     username: str | None = Field(None, min_length=5, max_length=50)
