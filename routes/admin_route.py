@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import datetime
 
-from database.connection import get_db
+from utils.dependencies import get_db
 from models.accounts import Accounts
 from utils.admin_guard import require_admin
 from schemas.admin_schema import (

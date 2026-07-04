@@ -32,17 +32,17 @@ class AccountRegister(BaseModel):
     @model_validator(mode="after")
     def validate_password(self):
 
-        if self.password.lower() == self.username.lower():
+        if self.username and self.password.lower() == self.username.lower():
             raise ValueError("password must not be the same as username")
         
         return self
 
     @field_validator("username")
     @classmethod
-    def validate_username(cls, value:str):
-        if not value[0].isupper():
-            raise ValueError("Invalid format. Use one uppercase at the beginning.")
-        
+    def validate_username(cls, value: str | None):
+        if value is not None:
+            if not value[0].isupper():
+                raise ValueError("Invalid format. Use one uppercase at the beginning.")
         return value
     
 

@@ -16,6 +16,7 @@ class UserSex(str, Enum):
     Female = "Female"
 
 class GradeLevel(str, Enum):
+    kindergarten = "kindergarten"
     grade_1 = "grade_1"
     grade_2 = "grade_2"
     grade_3 = "grade_3"
