@@ -1,13 +1,13 @@
-from pydantic import BaseModel, field_validator, model_validator, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 from utils.enum import StudentType, GradeLevel, UserSex
 from datetime import datetime
 
 class StudentProfileBase(BaseModel):
     name: str = Field(min_length=5, max_length=100)
-    age: int
+    age: int = Field(ge=1, le=120)
     sex: UserSex
     grade_level: GradeLevel
-    section: str
+    section: str = Field(min_length=1, max_length=250)
     student_type: StudentType
     guardians_name: str | None = None
     guardians_contact_no: str | None = None
@@ -15,66 +15,55 @@ class StudentProfileBase(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def data_strip(cls, data):
+    def sanitize_inputs(cls, data):
         if not isinstance(data, dict):
             return data
-        
-        fields = ["name", "section", "guardians_name", "guardians_contact_no", "address"]
-        
-        for field in fields:
-            value = data.get(field)
 
+        for field in ["name", "section", "guardians_name", "guardians_contact_no", "address"]:
+            value = data.get(field)
             if isinstance(value, str):
                 data[field] = value.strip()
 
         return data
-    
+
     @field_validator("name")
     @classmethod
-    def validate_name(cls, value:str):
-        
+    def validate_name(cls, value: str):
         if not value:
             raise ValueError("Name cannot be empty")
-        
         if not value[0].isupper():
             raise ValueError("Name must start with an uppercase letter.")
-        
         return value
-    
+
     @field_validator("guardians_name")
     @classmethod
-    def validate_guardians_name(cls, value:str):
-        
-        if value:
-            if not value[0].isupper():
-                raise ValueError("Guardians name must start with an uppercase letter.")
-        
+    def validate_guardians_name(cls, value: str | None):
+        if value and not value[0].isupper():
+            raise ValueError("Guardians name must start with an uppercase letter.")
         return value
-    
+
     @field_validator("guardians_contact_no")
     @classmethod
-    def validate_guardians_contact_no(cls, value:str):
-
+    def validate_guardians_contact_no(cls, value: str | None):
+        if value is None or value == "":
+            return value
         if not value.isdigit():
             raise ValueError("Contact number must contain only numbers.")
-
         if not value.startswith("0"):
             raise ValueError("Contact number must start with 0.")
-        
         if len(value) != 11:
             raise ValueError("Contact number consists of 11 numbers.")
-
         return value
-    
+
 class StudentProfileCreate(StudentProfileBase):
     pass
 
 class StudentProfileUpdate(BaseModel):
-    name: str | None = None
-    age: int | None = None
+    name: str | None = Field(default=None, min_length=5, max_length=100)
+    age: int | None = Field(default=None, ge=1, le=120)
     sex: UserSex | None = None
     grade_level: GradeLevel | None = None
-    section: str | None = None
+    section: str | None = Field(default=None, min_length=1, max_length=250)
     student_type: StudentType | None = None
     guardians_name: str | None = None
     guardians_contact_no: str | None = None
@@ -82,69 +71,51 @@ class StudentProfileUpdate(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def data_strip(cls, data):
+    def sanitize_inputs(cls, data):
         if not isinstance(data, dict):
             return data
-        
-        fields = ["name", "section", "guardians_name", "guardians_contact_no", "address"]
-        
-        for field in fields:
-            value = data.get(field)
 
+        for field in ["name", "section", "guardians_name", "guardians_contact_no", "address"]:
+            value = data.get(field)
             if isinstance(value, str):
                 data[field] = value.strip()
 
         return data
-    
+
     @field_validator("name")
     @classmethod
-    def validate_name(cls, value:str):
-        
-        if value is None:
-            return value
-        
-        if not value[0].isupper():
+    def validate_name(cls, value: str | None):
+        if value is not None and not value[0].isupper():
             raise ValueError("Name must start with an uppercase letter.")
-        
         return value
-    
+
     @field_validator("guardians_name")
     @classmethod
-    def validate_guardians_name(cls, value:str):
-        if value is None:
-            return value
-
-        if value:
-            if not value[0].isupper():
-                raise ValueError("Guardians name must start with an uppercase letter.")
-        
+    def validate_guardians_name(cls, value: str | None):
+        if value and not value[0].isupper():
+            raise ValueError("Guardians name must start with an uppercase letter.")
         return value
-    
+
     @field_validator("guardians_contact_no")
     @classmethod
-    def validate_guardians_contact_no(cls, value:str):
-
-        if value is None:
+    def validate_guardians_contact_no(cls, value: str | None):
+        if value is None or value == "":
             return value
-
         if not value.isdigit():
             raise ValueError("Contact number must contain only numbers.")
-
         if not value.startswith("0"):
             raise ValueError("Contact number must start with 0.")
-        
         if len(value) != 11:
             raise ValueError("Contact number consists of 11 numbers.")
-
         return value
 
 class StudentProfileOut(BaseModel):
     id: int
     name: str
-    age: int
-    sex: UserSex
-    grade_level: GradeLevel
-    section: str
+    age: int | None = None
+    sex: UserSex | None = None
+    grade_level: GradeLevel | None = None
+    section: str | None = None
     student_type: StudentType
     account_id: int
     profile_image_id: int | None = None

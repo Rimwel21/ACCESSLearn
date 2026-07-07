@@ -19,7 +19,7 @@ class FileUpload(Base):
 
     file_category = Column(Enum(FileCategory), nullable=False)
 
-    # account relationship one to many, special for teacher learning materials, but in profile image, one to one only
+    # account relationship one to many
     owner_id = Column(Integer, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False, index=True)
 
     account = relationship("Accounts", back_populates="files")

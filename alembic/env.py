@@ -28,6 +28,12 @@ from models.student_profile import StudentProfile
 from models.teacher_profile import TeacherProfile
 from models.teacher_grade_handles import TeacherGradeHandles
 from models.file_upload import FileUpload
+from models.teacher_class import TeacherClass
+from models.teacher_module import TeacherModule
+from models.teacher_assessment import TeacherAssessment
+from models.learning_topic import LearningTopic
+from models.student_progress import StudentTopicProgress
+from models.student_quiz_progress import StudentQuizProgress
 target_metadata = Base.metadata
 
 # other values from the config, defined by the needs of env.py,

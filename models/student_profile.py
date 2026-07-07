@@ -9,15 +9,15 @@ class StudentProfile(Base):
 
     id = Column(Integer, primary_key=True, nullable=False, index=True)
 
-    name = Column(String(150), nullable=False)
+    name = Column(String, nullable=False)
 
-    age = Column(Integer, nullable=False)
+    age = Column(Integer, nullable=True)
 
-    sex = Column(Enum(UserSex), nullable=False)
+    sex = Column(Enum(UserSex), nullable=True)
 
-    grade_level = Column(Enum(GradeLevel), nullable=False)
+    grade_level = Column(Enum(GradeLevel), nullable=True)
 
-    section = Column(String(250), nullable=False)
+    section = Column(String(250), nullable=True)
 
     student_type = Column(Enum(StudentType), nullable=False)
 
@@ -41,4 +41,11 @@ class StudentProfile(Base):
 
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
 
+    @property
+    def username(self):
+        return self.student_account.username if self.student_account else None
+
+    @property
+    def email(self):
+        return self.student_account.email if self.student_account else None
 

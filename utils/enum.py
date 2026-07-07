@@ -26,4 +26,3 @@ class GradeLevel(str, Enum):
 class FileCategory(str, Enum):
     PROFILE_IMAGE = "PROFILE_IMAGE"
     LEARNING_MATERIAL = "LEARNING_MATERIAL"
-
