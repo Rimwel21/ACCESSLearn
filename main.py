@@ -6,6 +6,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from routes.accounts_route import router as account_auth
 from routes.refresh_token import router as refresh_router
 from routes.profile_route import router as account_profile
+from routes.otp_route import router as otp_router
+from routes.admin_approval_route import router as admin_approval
 from limiter import limiter
 
 app = FastAPI()
@@ -38,6 +40,8 @@ app.add_middleware(
 app.include_router(account_auth)
 app.include_router(account_profile)
 app.include_router(refresh_router)
+app.include_router(otp_router)
+app.include_router(admin_approval)
 
 @app.get("/")
 def root():

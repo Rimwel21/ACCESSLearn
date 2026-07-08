@@ -28,6 +28,7 @@ from models.student_profile import StudentProfile
 from models.teacher_profile import TeacherProfile
 from models.teacher_grade_handles import TeacherGradeHandles
 from models.file_upload import FileUpload
+from models.email_otp import EmailOTP
 target_metadata = Base.metadata
 
 # other values from the config, defined by the needs of env.py,
