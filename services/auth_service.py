@@ -42,7 +42,7 @@ def user_registration(request: Request, user: AccountRegister, db: Session):
         email=user.email if user.role == RoleEnum.teacher else None,
         hashed_password=hash_password(user.password),
         role=user.role,
-        verification_status=VerificationStatus.pending
+        verification_status=VerificationStatus.pending if user.role == RoleEnum.teacher else VerificationStatus.verified
     )
 
     db.add(new_account)
