@@ -1,7 +1,7 @@
-from sqlalchemy import String, Integer, Column, DateTime, Enum
+from sqlalchemy import String, Integer, Column, DateTime, Enum, Boolean
 from sqlalchemy.orm import relationship
 from database.connection import Base
-from utils.enum import RoleEnum
+from utils.enum import RoleEnum, VerificationStatus
 from utils.utc_now import utc_now
 
 class Accounts(Base):
@@ -28,6 +28,7 @@ class Accounts(Base):
 
     # one to one relationship sa teacher profile table
     teacher_profile = relationship("TeacherProfile", back_populates="teacher_account", passive_deletes=True, uselist=False)
+    verification_status = Column(Enum(VerificationStatus), default=VerificationStatus.pending, nullable=False)
 
     # teacher classes one to many relationship
     teacher_classes = relationship("TeacherClass", back_populates="teacher_account", passive_deletes=True)

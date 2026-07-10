@@ -1,11 +1,14 @@
 from fastapi import Request, HTTPException, status, Response
 from sqlalchemy.orm import Session
-from utils.enum import RoleEnum
+from utils.enum import RoleEnum, VerificationStatus
 from models.accounts import Accounts
 from schemas.accounts_schema import AccountRegister, AccountLogin
 from models.student_profile import StudentProfile
 from models.teacher_profile import TeacherProfile
 from auth.account_auth import hash_password, verify_password, create_access_token, create_refresh_token
+
+from models.email_otp import EmailOTP
+from utils.utc_now import utc_now
 
 def user_registration(request: Request, user: AccountRegister, db: Session):
     if user.role == RoleEnum.student:
@@ -17,12 +20,20 @@ def user_registration(request: Request, user: AccountRegister, db: Session):
     elif user.role == RoleEnum.teacher:
         if not user.email:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email is required for teacher accounts")
+        
+        verified_email = (
+            db.query(EmailOTP).filter(EmailOTP.email == user.email, EmailOTP.role == RoleEnum.teacher, EmailOTP.verification_status == VerificationStatus.verified, EmailOTP.is_used == True).order_by(EmailOTP.created_at.desc()).first()
+        )
 
+        if not verified_email:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account must be verified by OTP before registration")
+        
         existing = db.query(Accounts).filter(Accounts.email == user.email).first()
 
     elif user.role == RoleEnum.admin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin registration is not allowed")
-
+    
+    
     if existing:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Account already exists")
     
@@ -30,7 +41,8 @@ def user_registration(request: Request, user: AccountRegister, db: Session):
         username=user.username if user.role == RoleEnum.student else None,
         email=user.email if user.role == RoleEnum.teacher else None,
         hashed_password=hash_password(user.password),
-        role=user.role
+        role=user.role,
+        verification_status=VerificationStatus.pending if user.role == RoleEnum.teacher else VerificationStatus.verified
     )
 
     db.add(new_account)
@@ -59,6 +71,12 @@ def user_login(request: Request, user: AccountLogin, response: Response, db: Ses
 
     if not db_account:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+    
+    if db_account.verification_status == VerificationStatus.pending:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Wait for admin approval")
+    
+    if db_account.verification_status == VerificationStatus.blocked:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You've been blocked from the system")
 
     if not verify_password(user.password, db_account.hashed_password):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
@@ -102,7 +120,7 @@ def user_login(request: Request, user: AccountLogin, response: Response, db: Ses
         profile = db.query(TeacherProfile).filter(TeacherProfile.account_id == db_account.id).first()
 
         profile_completed = profile is not None
-
+        
     return {
         "access_token": access_token,
         "token_type": "bearer",

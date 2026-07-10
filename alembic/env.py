@@ -34,6 +34,7 @@ from models.teacher_assessment import TeacherAssessment
 from models.learning_topic import LearningTopic
 from models.student_progress import StudentTopicProgress
 from models.student_quiz_progress import StudentQuizProgress
+from models.email_otp import EmailOTP
 target_metadata = Base.metadata
 
 # other values from the config, defined by the needs of env.py,

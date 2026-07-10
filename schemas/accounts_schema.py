@@ -30,8 +30,11 @@ class AccountRegister(BaseModel):
 
     @field_validator("username")
     @classmethod
-    def validate_username(cls, value: str | None):
-        if value is not None and not value[0].isupper():
+    def validate_username(cls, value:str):
+        if value is None:
+            return value
+        
+        if not value[0].isupper():
             raise ValueError("Invalid format. Use one uppercase at the beginning.")
         return value
 

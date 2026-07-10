@@ -26,3 +26,9 @@ class GradeLevel(str, Enum):
 class FileCategory(str, Enum):
     PROFILE_IMAGE = "PROFILE_IMAGE"
     LEARNING_MATERIAL = "LEARNING_MATERIAL"
+
+class VerificationStatus(str, Enum):
+    pending = "pending"
+    verified = "verified"
+    blocked = "blocked"
+

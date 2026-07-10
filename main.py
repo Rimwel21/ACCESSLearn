@@ -15,6 +15,8 @@ from routes.student_module_route import router as student_modules
 from routes.handsign_route import router as handsign_router
 from core.handsign_config import get_handsign_settings
 from services.handsign.prediction_service import PredictionService
+from routes.otp_route import router as otp_router
+from routes.admin_approval_route import router as admin_approval
 from limiter import limiter
 
 app = FastAPI()
@@ -84,6 +86,9 @@ app.include_router(teacher_assessments)
 app.include_router(student_modules)
 app.include_router(student_activities)
 app.include_router(handsign_router)
+app.include_router(otp_router)
+app.include_router(admin_approval)
+
 
 @app.on_event("startup")
 def load_handsign_model():
@@ -94,7 +99,6 @@ def close_handsign_model():
     service = getattr(app.state, "handsign_prediction_service", None)
     if service is not None:
         service.close()
-
 @app.get("/")
 def root():
     return{"message": "FastAPI running on Port 8000..."}
