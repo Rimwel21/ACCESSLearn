@@ -13,7 +13,7 @@ async def request_teacher_otp(request:Request,db: Session, email: str):
     existing_account = db.query(Accounts).filter(Accounts.email == email).first()
 
     pending_otp = (
-        db.query(EmailOTP).filter(EmailOTP.email == email, EmailOTP.verification_status == VerificationStatus.pending).order_by(EmailOTP.created_at.desc()).first()
+        db.query(EmailOTP).filter(EmailOTP.email == email, EmailOTP.verification_status == VerificationStatus.pending, EmailOTP.expired_at >= utc_now()).order_by(EmailOTP.created_at.desc()).first()
     )
     
     expired_otps = db.query(EmailOTP).filter(EmailOTP.email == email, EmailOTP.expired_at < utc_now(), EmailOTP.verification_status == VerificationStatus.pending).all()
@@ -22,9 +22,15 @@ async def request_teacher_otp(request:Request,db: Session, email: str):
         for otp in expired_otps:
             db.delete(otp)
 
-        db.commit() 
+        db.commit()
+
+    if pending_otp:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Please wait, there's still pending email, wait for otp expiration.") 
 
     if existing_account:
+        if existing_account.verification_status == VerificationStatus.pending:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email is already created, and waiting for admins approval")
+
         if existing_account.verification_status == VerificationStatus.verified:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -34,9 +40,6 @@ async def request_teacher_otp(request:Request,db: Session, email: str):
         if existing_account.verification_status == VerificationStatus.blocked:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="blocked account cannot request otp")
     
-
-    if pending_otp:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="There's still pending request")
     
     otp = generate_otp()
 
@@ -64,12 +67,19 @@ def verify_teacher_otp(db:Session, email:str, otp:str):
     otp_record = (db.query(EmailOTP).filter(EmailOTP.email == email, EmailOTP.role == RoleEnum.teacher,EmailOTP.verification_status == VerificationStatus.pending).order_by(EmailOTP.created_at.desc())
     .first()
     )
+
+    existing_account = (
+        db.query(Accounts).filter(Accounts.email == email).first()
+    )
     
     if not otp_record:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="OTP not found"
         )
+
+    if existing_account:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Account already created")
     
     if otp_record.is_used:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="otp already used")
