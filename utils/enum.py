@@ -34,9 +34,11 @@ class AccountStatusEnum(str, Enum):
     """Full lifecycle for teacher and student accounts."""
     pending_activation  = "pending_activation"   # invitation sent, not yet verified
     waiting_assignment  = "waiting_assignment"    # email verified + password set, awaiting grade/section
+    pending_approval    = "pending_approval"      # student registered, waiting for admin approval
     active              = "active"
     inactive            = "inactive"
     archived            = "archived"
+    suspended           = "suspended"
 
 class InvitationStatusEnum(str, Enum):
     pending   = "pending"

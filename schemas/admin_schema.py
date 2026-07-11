@@ -82,17 +82,64 @@ class BulkActionRequest(BaseModel):
     reason:      Optional[str] = Field(None, max_length=500)
 
 
+# ─── School Year ───────────────────────────────────────────────────────────────
+
+class SchoolYearCreate(BaseModel):
+    name: str = Field(..., min_length=4, max_length=50)
+
+class SchoolYearUpdate(BaseModel):
+    name: Optional[str] = None
+    is_current: Optional[bool] = None
+    status: Optional[SectionStatusEnum] = None
+
+class SchoolYearOut(BaseModel):
+    id: int
+    name: str
+    is_current: bool
+    status: SectionStatusEnum
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ─── Grade Level ───────────────────────────────────────────────────────────────
+
+class GradeLevelCreate(BaseModel):
+    name: str = Field(..., min_length=2, max_length=50)
+
+class GradeLevelUpdate(BaseModel):
+    name: Optional[str] = None
+    status: Optional[SectionStatusEnum] = None
+
+class GradeLevelOut(BaseModel):
+    id: int
+    name: str
+    status: SectionStatusEnum
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 # ─── Section ───────────────────────────────────────────────────────────────────
 
 class SectionCreate(BaseModel):
     name:        str         = Field(..., min_length=1, max_length=100)
-    grade_level: GradeLevel
+    grade_level_id: int
+    school_year_id: int
     capacity:    int         = Field(40, ge=1, le=200)
+    subject:     Optional[str] = None
 
 class SectionUpdate(BaseModel):
     name:        Optional[str]         = None
-    grade_level: Optional[GradeLevel]  = None
+    grade_level_id: Optional[int]      = None
+    school_year_id: Optional[int]      = None
     capacity:    Optional[int]         = Field(None, ge=1, le=200)
+    subject:     Optional[str]         = None
+    status:      Optional[SectionStatusEnum] = None
 
 class SectionAssignTeacher(BaseModel):
     teacher_id: int
@@ -100,10 +147,14 @@ class SectionAssignTeacher(BaseModel):
 class SectionOut(BaseModel):
     id:              int
     name:            str
-    grade_level:     GradeLevel
+    grade_level_id:  int
+    grade_level_name: Optional[str]   = None
+    school_year_id:  Optional[int]   = None
+    school_year_name: Optional[str]  = None
     capacity:        int
     status:          SectionStatusEnum
-    teacher_id:      Optional[int]
+    subject:         Optional[str]   = None
+    teacher_id:      Optional[int]   = None
     teacher_name:    Optional[str]   = None
     current_count:   int             = 0      # computed by service
     available_slots: int             = 0

@@ -7,6 +7,7 @@ from routes.accounts_route import router as account_auth
 from routes.refresh_token import router as refresh_router
 from routes.profile_route import router as account_profile
 from routes.admin_route import router as admin_router
+from routes.teacher_route import router as teacher_router
 from limiter import limiter
 
 app = FastAPI()
@@ -40,6 +41,7 @@ app.include_router(account_auth)
 app.include_router(account_profile)
 app.include_router(refresh_router)
 app.include_router(admin_router)
+app.include_router(teacher_router)
 
 @app.get("/")
 def root():

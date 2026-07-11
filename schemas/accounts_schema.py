@@ -8,6 +8,13 @@ class AccountRegister(BaseModel):
     email: EmailStr | None = None
     password: str = Field(min_length=8, max_length=30)
     role: RoleEnum
+    
+    # Optional Student Registration Fields
+    fullName: str | None = None
+    contactNo: str | None = None
+    studentId: str | None = None
+    grade_level_id: int | None = None
+    section_id: int | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -44,6 +51,25 @@ class AccountRegister(BaseModel):
             if not value[0].isupper():
                 raise ValueError("Invalid format. Use one uppercase at the beginning.")
         return value
+
+class PublicGradeLevelOut(BaseModel):
+    id: int
+    name: str
+
+    class Config:
+        from_attributes = True
+
+class PublicSectionOut(BaseModel):
+    id: int
+    name: str
+    grade_level_id: int
+    subject: str | None = None
+    school_year: str | None = None
+    teacher_name: str | None = None
+
+    class Config:
+        from_attributes = True
+
     
 
 class AccountLogin(BaseModel):

@@ -49,8 +49,66 @@ def change_account_status(
         AccountStatusEnum.active:   AuditActionEnum.activated,
         AccountStatusEnum.inactive: AuditActionEnum.deactivated,
         AccountStatusEnum.archived: AuditActionEnum.archived,
+        AccountStatusEnum.suspended: AuditActionEnum.deactivated,
     }
     action = action_map.get(new_status, AuditActionEnum.updated)
+
+    # Status Notification Triggers for Student Approval
+    if account.role == RoleEnum.student and new_status == AccountStatusEnum.active and old_status != AccountStatusEnum.active:
+        from repositories.notification_repository import NotificationRepository
+        from models.student_profile import StudentProfile
+        from models.section import Section
+        from models.notification import Notification
+        from utils.enum import NotificationCategoryEnum, NotificationPriorityEnum
+        from repositories.section_repository import SectionRepository
+        
+        profile = db.query(StudentProfile).filter(StudentProfile.account_id == account.id).first()
+        if profile and profile.section_id:
+            sec = db.query(Section).filter(Section.id == profile.section_id).first()
+            if sec:
+                # 1. Student Notification: Approved
+                NotificationRepository.create(db, Notification(
+                    recipient_id=account.id,
+                    title="Registration Approved",
+                    description=f"Welcome! Your registration for {sec.grade_level.name if sec.grade_level else ''} - {sec.name} has been approved.",
+                    priority=NotificationPriorityEnum.medium,
+                    category=NotificationCategoryEnum.student,
+                    related_page="/student/dashboard"
+                ))
+                
+                # 2. Student Notification: Teacher Assigned
+                if sec.teacher_id:
+                    t_name = sec.teacher.teacher_profile.name if (sec.teacher and sec.teacher.teacher_profile) else (sec.teacher.email if sec.teacher else "")
+                    NotificationRepository.create(db, Notification(
+                        recipient_id=account.id,
+                        title="Teacher Assigned",
+                        description=f"Teacher {t_name} has been assigned to your section.",
+                        priority=NotificationPriorityEnum.low,
+                        category=NotificationCategoryEnum.student,
+                        related_page="/student/dashboard"
+                    ))
+                    
+                    # 3. Teacher Notification: Student Joined
+                    NotificationRepository.create(db, Notification(
+                        recipient_id=sec.teacher_id,
+                        title="New Student Joined",
+                        description=f"Student {profile.name} has been approved and joined your class ({sec.name}).",
+                        priority=NotificationPriorityEnum.medium,
+                        category=NotificationCategoryEnum.section,
+                        related_page="/teacher/class"
+                    ))
+                
+                # 4. Admin capacity warning
+                stud_count = SectionRepository.get_student_count(db, sec.id)
+                if stud_count >= sec.capacity:
+                    NotificationRepository.create(db, Notification(
+                        recipient_id=admin.id,
+                        title="Section Capacity Reached",
+                        description=f"Section {sec.grade_level.name if sec.grade_level else ''} - {sec.name} is now at full capacity ({sec.capacity}/{sec.capacity}).",
+                        priority=NotificationPriorityEnum.high,
+                        category=NotificationCategoryEnum.system,
+                        related_page="/admin/sections"
+                    ))
 
     write_log(
         db,

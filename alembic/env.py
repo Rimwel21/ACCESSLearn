@@ -28,6 +28,10 @@ from models.student_profile import StudentProfile
 from models.teacher_profile import TeacherProfile
 from models.teacher_grade_handles import TeacherGradeHandles
 from models.file_upload import FileUpload
+from models.grade_level import GradeLevel
+from models.school_year import SchoolYear
+from models.section import Section
+from models.teacher_assignment_history import TeacherAssignmentHistory
 target_metadata = Base.metadata
 
 # other values from the config, defined by the needs of env.py,

@@ -5,6 +5,9 @@ from datetime import datetime
 
 from utils.dependencies import get_db
 from models.accounts import Accounts
+from models.student_profile import StudentProfile
+from models.school_year import SchoolYear
+from models.grade_level import GradeLevel
 from utils.admin_guard import require_admin
 from schemas.admin_schema import (
     AdminDashboardStats,
@@ -24,7 +27,13 @@ from schemas.admin_schema import (
     ReportOut,
     PaginatedResponse,
     TransferHistoryOut,
-    AssignmentHistoryOut
+    AssignmentHistoryOut,
+    GradeLevelCreate,
+    GradeLevelUpdate,
+    GradeLevelOut,
+    SchoolYearCreate,
+    SchoolYearUpdate,
+    SchoolYearOut
 )
 from services.dashboard_service import DashboardService
 from services.account_admin_service import list_accounts, change_account_status, hard_delete_account, bulk_action
@@ -34,7 +43,7 @@ from services.student_admin_service import StudentAdminService
 from services.audit_service import get_audit_logs
 from services.notification_service import get_notifications, mark_read, mark_all_read, delete_notification, delete_all_notifications
 from services.report_service import ReportService
-from utils.enum import RoleEnum, AccountStatusEnum, InvitationStatusEnum, AuditActionEnum, SectionStatusEnum, GradeLevel
+from utils.enum import RoleEnum, AccountStatusEnum, InvitationStatusEnum, AuditActionEnum, SectionStatusEnum
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
@@ -103,7 +112,14 @@ def invite_teacher(
     db: Session = Depends(get_db),
     admin: Accounts = Depends(require_admin)
 ):
-    return send_teacher_invitation(db, full_name=data.full_name, email=data.email, contact_no=data.contact_no, admin=admin, request=request)
+    return send_teacher_invitation(
+        db,
+        full_name=data.full_name,
+        email=data.email,
+        contact_no=data.contact_no,
+        admin=admin,
+        request=request
+    )
 
 @router.get("/teachers/invitations", response_model=PaginatedResponse)
 def get_teacher_invitations(
@@ -137,6 +153,82 @@ def cancel_teacher_invite(
     return cancel_invitation(db, invitation_id, admin=admin, request=request)
 
 
+# ─── School Year Management ───────────────────────────────────────────────────
+
+@router.post("/school-years", response_model=SchoolYearOut)
+def create_school_year(
+    data: SchoolYearCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: Accounts = Depends(require_admin)
+):
+    return SectionAdminService.create_school_year(db, data, admin, request)
+
+@router.get("/school-years", response_model=List[SchoolYearOut])
+def get_school_years(
+    db: Session = Depends(get_db),
+    admin: Accounts = Depends(require_admin)
+):
+    return db.query(SchoolYear).order_by(SchoolYear.name.desc()).all()
+
+@router.patch("/school-years/{sy_id}", response_model=SchoolYearOut)
+def update_school_year(
+    sy_id: int,
+    data: SchoolYearUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: Accounts = Depends(require_admin)
+):
+    return SectionAdminService.update_school_year(db, sy_id, data, admin, request)
+
+
+# ─── Grade Level Management ────────────────────────────────────────────────────
+
+@router.post("/grade-levels", response_model=GradeLevelOut)
+def create_grade_level(
+    data: GradeLevelCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: Accounts = Depends(require_admin)
+):
+    return SectionAdminService.create_grade_level(db, data, admin, request)
+
+@router.get("/grade-levels", response_model=List[GradeLevelOut])
+def get_grade_levels(
+    db: Session = Depends(get_db),
+    admin: Accounts = Depends(require_admin)
+):
+    return db.query(GradeLevel).order_by(GradeLevel.name).all()
+
+@router.patch("/grade-levels/{grade_id}", response_model=GradeLevelOut)
+def update_grade_level(
+    grade_id: int,
+    data: GradeLevelUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: Accounts = Depends(require_admin)
+):
+    return SectionAdminService.update_grade_level(db, grade_id, data, admin, request)
+
+@router.post("/grade-levels/{grade_id}/archive", response_model=GradeLevelOut)
+def archive_grade_level(
+    grade_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: Accounts = Depends(require_admin)
+):
+    return SectionAdminService.archive_grade_level(db, grade_id, admin, request)
+
+@router.post("/grade-levels/{grade_id}/restore", response_model=GradeLevelOut)
+def restore_grade_level(
+    grade_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: Accounts = Depends(require_admin)
+):
+    return SectionAdminService.restore_grade_level(db, grade_id, admin, request)
+
+
 # ─── Section Management ────────────────────────────────────────────────────────
 
 @router.post("/sections", response_model=SectionOut)
@@ -150,7 +242,8 @@ def create_new_section(
 
 @router.get("/sections", response_model=PaginatedResponse)
 def get_sections(
-    grade_level: Optional[GradeLevel] = None,
+    grade_level_id: Optional[int] = None,
+    school_year_id: Optional[int] = None,
     status: Optional[SectionStatusEnum] = None,
     teacher_id: Optional[int] = None,
     page: int = Query(1, ge=1),
@@ -158,9 +251,52 @@ def get_sections(
     db: Session = Depends(get_db),
     admin: Accounts = Depends(require_admin)
 ):
-    total, items = SectionAdminService.list_sections(db, grade_level=grade_level, status=status, teacher_id=teacher_id, page=page, per_page=per_page)
-    # Mapping items to include counts if necessary
-    return PaginatedResponse(total=total, page=page, per_page=per_page, items=items)
+    total, items = SectionAdminService.list_sections(
+        db, grade_level_id=grade_level_id, school_year_id=school_year_id, status=status, teacher_id=teacher_id, page=page, per_page=per_page
+    )
+    
+    result = []
+    for sec in items:
+        teacher_name = None
+        if sec.teacher:
+            profile = sec.teacher.teacher_profile
+            if profile:
+                teacher_name = profile.name
+            else:
+                teacher_name = sec.teacher.email or sec.teacher.username
+                
+        student_count = db.query(StudentProfile).join(Accounts).filter(
+            StudentProfile.section_id == sec.id,
+            Accounts.account_status.in_([AccountStatusEnum.active, AccountStatusEnum.pending_approval])
+        ).count()
+        
+        pct = (student_count / sec.capacity) * 100 if sec.capacity > 0 else 0
+        cap_status = "Normal"
+        if pct >= 100: cap_status = "Full"
+        elif pct >= 95: cap_status = "Critical"
+        elif pct >= 80: cap_status = "Warning"
+
+        result.append({
+            "id": sec.id,
+            "name": sec.name,
+            "grade_level_id": sec.grade_level_id,
+            "grade_level_name": sec.grade_level.name if sec.grade_level else None,
+            "school_year_id": sec.school_year_id,
+            "school_year_name": sec.school_year.name if sec.school_year else None,
+            "capacity": sec.capacity,
+            "status": sec.status,
+            "subject": sec.subject,
+            "teacher_id": sec.teacher_id,
+            "teacher_name": teacher_name,
+            "current_count": student_count,
+            "available_slots": max(0, sec.capacity - student_count),
+            "capacity_pct": pct,
+            "capacity_status": cap_status,
+            "created_at": sec.created_at,
+            "updated_at": sec.updated_at
+        })
+        
+    return PaginatedResponse(total=total, page=page, per_page=per_page, items=result)
 
 @router.patch("/sections/{section_id}", response_model=SectionOut)
 def update_section_info(
@@ -170,7 +306,33 @@ def update_section_info(
     db: Session = Depends(get_db),
     admin: Accounts = Depends(require_admin)
 ):
-    return SectionAdminService.update_section(db, section_id, data, admin, request)
+    sec = SectionAdminService.update_section(db, section_id, data, admin, request)
+    # Quick formatting for return section
+    student_count = db.query(StudentProfile).join(Accounts).filter(
+        StudentProfile.section_id == sec.id,
+        Accounts.account_status.in_([AccountStatusEnum.active, AccountStatusEnum.pending_approval])
+    ).count()
+    teacher_name = (sec.teacher.teacher_profile.name if sec.teacher.teacher_profile else sec.teacher.email) if sec.teacher else None
+    
+    return {
+        "id": sec.id,
+        "name": sec.name,
+        "grade_level_id": sec.grade_level_id,
+        "grade_level_name": sec.grade_level.name if sec.grade_level else None,
+        "school_year_id": sec.school_year_id,
+        "school_year_name": sec.school_year.name if sec.school_year else None,
+        "capacity": sec.capacity,
+        "status": sec.status,
+        "subject": sec.subject,
+        "teacher_id": sec.teacher_id,
+        "teacher_name": teacher_name,
+        "current_count": student_count,
+        "available_slots": max(0, sec.capacity - student_count),
+        "capacity_pct": (student_count / sec.capacity) * 100 if sec.capacity > 0 else 0,
+        "capacity_status": "Normal",
+        "created_at": sec.created_at,
+        "updated_at": sec.updated_at
+    }
 
 @router.patch("/sections/{section_id}/assign-teacher", response_model=SectionOut)
 def assign_teacher_to_section(
@@ -180,7 +342,32 @@ def assign_teacher_to_section(
     db: Session = Depends(get_db),
     admin: Accounts = Depends(require_admin)
 ):
-    return SectionAdminService.assign_teacher(db, section_id, teacher_id, admin, request)
+    sec = SectionAdminService.assign_teacher(db, section_id, teacher_id, admin, request)
+    student_count = db.query(StudentProfile).join(Accounts).filter(
+        StudentProfile.section_id == sec.id,
+        Accounts.account_status.in_([AccountStatusEnum.active, AccountStatusEnum.pending_approval])
+    ).count()
+    teacher_name = (sec.teacher.teacher_profile.name if sec.teacher.teacher_profile else sec.teacher.email) if sec.teacher else None
+    
+    return {
+        "id": sec.id,
+        "name": sec.name,
+        "grade_level_id": sec.grade_level_id,
+        "grade_level_name": sec.grade_level.name if sec.grade_level else None,
+        "school_year_id": sec.school_year_id,
+        "school_year_name": sec.school_year.name if sec.school_year else None,
+        "capacity": sec.capacity,
+        "status": sec.status,
+        "subject": sec.subject,
+        "teacher_id": sec.teacher_id,
+        "teacher_name": teacher_name,
+        "current_count": student_count,
+        "available_slots": max(0, sec.capacity - student_count),
+        "capacity_pct": (student_count / sec.capacity) * 100 if sec.capacity > 0 else 0,
+        "capacity_status": "Normal",
+        "created_at": sec.created_at,
+        "updated_at": sec.updated_at
+    }
 
 @router.post("/sections/{section_id}/archive", response_model=SectionOut)
 def archive_section(
@@ -189,7 +376,38 @@ def archive_section(
     db: Session = Depends(get_db),
     admin: Accounts = Depends(require_admin)
 ):
-    return SectionAdminService.archive_section(db, section_id, admin, request)
+    sec = SectionAdminService.archive_section(db, section_id, admin, request)
+    return {
+        "id": sec.id,
+        "name": sec.name,
+        "grade_level_id": sec.grade_level_id,
+        "grade_level_name": sec.grade_level.name if sec.grade_level else None,
+        "capacity": sec.capacity,
+        "status": sec.status,
+        "subject": sec.subject,
+        "created_at": sec.created_at,
+        "updated_at": sec.updated_at
+    }
+
+@router.post("/sections/{section_id}/restore", response_model=SectionOut)
+def restore_section(
+    section_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: Accounts = Depends(require_admin)
+):
+    sec = SectionAdminService.restore_section(db, section_id, admin, request)
+    return {
+        "id": sec.id,
+        "name": sec.name,
+        "grade_level_id": sec.grade_level_id,
+        "grade_level_name": sec.grade_level.name if sec.grade_level else None,
+        "capacity": sec.capacity,
+        "status": sec.status,
+        "subject": sec.subject,
+        "created_at": sec.created_at,
+        "updated_at": sec.updated_at
+    }
 
 
 # ─── Student Management ────────────────────────────────────────────────────────
@@ -228,7 +446,7 @@ def list_system_audit_logs(
     module: Optional[str] = None,
     action: Optional[AuditActionEnum] = None,
     actor_role: Optional[RoleEnum] = None,
-    date_from: Optional[str] = None, # datetime string
+    date_from: Optional[str] = None,
     date_to: Optional[str] = None,
     search: Optional[str] = None,
     page: int = Query(1, ge=1),
@@ -236,7 +454,6 @@ def list_system_audit_logs(
     db: Session = Depends(get_db),
     admin: Accounts = Depends(require_admin)
 ):
-    # Parsing dates if provided
     d_from = None
     if date_from:
         d_from = datetime.fromisoformat(date_from)
