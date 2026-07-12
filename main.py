@@ -92,13 +92,21 @@ app.include_router(admin_approval)
 
 @app.on_event("startup")
 def load_handsign_model():
-    app.state.handsign_prediction_service = PredictionService(get_handsign_settings())
+    try:
+        app.state.handsign_prediction_service = PredictionService(get_handsign_settings())
+        print("Hand Sign model loaded successfully.")
+    except Exception as e:
+        print(f"WARNING: Hand Sign model not loaded: {e}. Hand sign routes will not function, but authentication and other modules are active.")
+        app.state.handsign_prediction_service = None
 
 @app.on_event("shutdown")
 def close_handsign_model():
     service = getattr(app.state, "handsign_prediction_service", None)
     if service is not None:
-        service.close()
+        try:
+            service.close()
+        except Exception:
+            pass
 @app.get("/")
 def root():
     return{"message": "FastAPI running on Port 8000..."}
