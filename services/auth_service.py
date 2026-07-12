@@ -1,6 +1,6 @@
 from fastapi import Request, HTTPException, status, Response
 from sqlalchemy.orm import Session
-from utils.enum import RoleEnum, VerificationStatus
+from utils.enum import RoleEnum, VerificationStatus, AccountStatusEnum
 from models.accounts import Accounts
 from schemas.accounts_schema import AccountRegister, AccountLogin
 from models.student_profile import StudentProfile
@@ -42,7 +42,8 @@ def user_registration(request: Request, user: AccountRegister, db: Session):
         email=user.email if user.role == RoleEnum.teacher else None,
         hashed_password=hash_password(user.password),
         role=user.role,
-        verification_status=VerificationStatus.pending if user.role == RoleEnum.teacher else VerificationStatus.verified
+        verification_status=VerificationStatus.pending if user.role == RoleEnum.teacher else VerificationStatus.verified,
+        account_status=AccountStatusEnum.pending_activation if user.role == RoleEnum.teacher else AccountStatusEnum.active
     )
 
     db.add(new_account)

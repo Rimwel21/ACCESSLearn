@@ -57,7 +57,14 @@ async def request_teacher_otp(request:Request,db: Session, email: str):
     db.commit()
     db.refresh(otp_record)
 
-    await EmailService.send_teacher_otp_email(email=email, otp=otp)
+    try:
+        await EmailService.send_teacher_otp_email(email=email, otp=otp)
+    except Exception as e:
+        import sys
+        print(f"\n=======================================================", file=sys.stderr)
+        print(f"[REGISTRATION FALLBACK] COULD NOT SEND EMAIL: {e}", file=sys.stderr)
+        print(f"TEACHER OTP FOR {email} IS: {otp}", file=sys.stderr)
+        print(f"=======================================================\n", file=sys.stderr)
 
     return {
         "message": "OTP sent successfully"

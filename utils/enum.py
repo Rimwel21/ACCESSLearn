@@ -32,3 +32,59 @@ class VerificationStatus(str, Enum):
     verified = "verified"
     blocked = "blocked"
 
+class AccountStatusEnum(str, Enum):
+    pending_activation = "pending_activation"
+    waiting_assignment = "waiting_assignment"
+    active = "active"
+    inactive = "inactive"
+    archived = "archived"
+    suspended = "suspended"
+
+class SectionStatusEnum(str, Enum):
+    active = "active"
+    inactive = "inactive"
+    archived = "archived"
+
+class AuditActionEnum(str, Enum):
+    created = "created"
+    updated = "updated"
+    assigned = "assigned"
+    archived = "archived"
+    restored = "restored"
+    transferred = "transferred"
+    invited = "invited"
+    invitation_resent = "invitation_resent"
+    invitation_cancelled = "invitation_cancelled"
+    activated = "activated"
+    deactivated = "deactivated"
+    hard_deleted = "hard_deleted"
+    bulk_action = "bulk_action"
+
+class NotificationCategoryEnum(str, Enum):
+    student = "student"
+    section = "section"
+    teacher = "teacher"
+    system = "system"
+
+class NotificationPriorityEnum(str, Enum):
+    low = "low"
+    medium = "medium"
+    high = "high"
+
+class InvitationStatusEnum(str, Enum):
+    pending = "pending"
+    accepted = "accepted"
+    resent = "resent"
+    cancelled = "cancelled"
+
+class ReportTypeEnum(str, Enum):
+    audit_report = "audit_report"
+    account_status = "account_status"
+
+class BulkActionEnum(str, Enum):
+    activate = "activate"
+    deactivate = "deactivate"
+    archive = "archive"
+    restore = "restore"
+    delete = "delete"
+
