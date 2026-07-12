@@ -1,7 +1,7 @@
 from sqlalchemy import String, Integer, Column, DateTime, Enum, Boolean
 from sqlalchemy.orm import relationship
 from database.connection import Base
-from utils.enum import RoleEnum, AccountStatusEnum
+from utils.enum import RoleEnum, VerificationStatus
 from utils.utc_now import utc_now
 
 class Accounts(Base):
@@ -14,38 +14,36 @@ class Accounts(Base):
 
     email = Column(String(50), unique=True, nullable=True, index=True)
     # email only for teacher and admin
-
+    
     hashed_password = Column(String(255), nullable=False)
 
     role = Column(Enum(RoleEnum), default=RoleEnum.student, nullable=False)
     # Student | Teacher | Admin
-
-    # Full account lifecycle status (admin-controlled)
-    account_status = Column(
-        Enum(AccountStatusEnum),
-        default=AccountStatusEnum.active,
-        nullable=False,
-        index=True,
-    )
-
+    
     # one to one relationship sa student profile table
     student_profile = relationship("StudentProfile", back_populates="student_account", passive_deletes=True, uselist=False)
 
-    # teacher(owner_id) file relationship one to many for learning materials
+    # student/teacher(owner_id) file relationship one to many
     files = relationship("FileUpload", back_populates="account", passive_deletes=True)
 
     # one to one relationship sa teacher profile table
     teacher_profile = relationship("TeacherProfile", back_populates="teacher_account", passive_deletes=True, uselist=False)
+    verification_status = Column(Enum(VerificationStatus), default=VerificationStatus.pending, nullable=False)
 
-    # ─── Admin relationships ────────────────────────────────────────────────
-    notifications_received = relationship(
-        "Notification", foreign_keys="Notification.recipient_id",
-        back_populates="recipient", passive_deletes=True
-    )
-    audit_logs = relationship(
-        "AuditLog", foreign_keys="AuditLog.user_id",
-        back_populates="actor", passive_deletes=True
-    )
+    # teacher classes one to many relationship
+    teacher_classes = relationship("TeacherClass", back_populates="teacher_account", passive_deletes=True)
+
+    # teacher modules one to many relationship
+    teacher_modules = relationship("TeacherModule", back_populates="teacher_account", passive_deletes=True)
+
+    # teacher quiz/activity assessments one to many relationship
+    teacher_assessments = relationship("TeacherAssessment", back_populates="teacher_account", passive_deletes=True)
+
+    topic_progress = relationship("StudentTopicProgress", passive_deletes=True)
+    quiz_progress = relationship("StudentQuizProgress", passive_deletes=True)
 
     created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
+
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+
