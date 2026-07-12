@@ -3,7 +3,9 @@ import type { RouteRecordRaw } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 
 const routes: RouteRecordRaw[] = [
-  { path: '/', name: 'Portal', component: () => import('@/pages/auth/PortalPage.vue') },
+  { path: '/', name: 'Home', component: () => import('@/pages/LandingPage.vue') },
+  { path: '/portal', name: 'Portal', component: () => import('@/pages/auth/PortalPage.vue') },
+  { path: '/auth', name: 'Auth', component: () => import('@/pages/auth/AuthPage.vue') },
   { path: '/login',    name: 'Login',    component: () => import('@/pages/auth/LoginPage.vue') },
   { path: '/register', name: 'Register', component: () => import('@/pages/auth/RegisterPage.vue') },
   { path: '/profile/setup', name: 'ProfileSetup', component: () => import('@/pages/auth/ProfileSetupPage.vue'), meta: { requiresAuth: true } },
@@ -80,7 +82,7 @@ router.beforeEach((to) => {
         : { path: '/student/dashboard' }
   }
 
-  if ((to.name === 'Login' || to.name === 'Register') && auth.isAuthenticated) {
+  if ((to.name === 'Login' || to.name === 'Register' || to.name === 'Portal') && auth.isAuthenticated) {
     return auth.role === 'teacher'
       ? { path: '/teacher/class' }
       : auth.role === 'admin'
