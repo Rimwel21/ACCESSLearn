@@ -2,14 +2,13 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 from limiter import limiter
 from models.accounts import Accounts
-from schemas.teacher_class_schema import ClassStudentOut, TeacherClassCreate, TeacherClassOut, TeacherClassUpdate
+from schemas.teacher_class_schema import ClassStudentOut, TeacherClassCreate, TeacherClassOut
 from services.teacher_class_service import (
     create_teacher_class,
     delete_teacher_class,
     get_teacher_class,
     list_class_students,
     list_teacher_classes,
-    update_teacher_class,
 )
 from utils.dependencies import get_current_user, get_db
 
@@ -79,22 +78,22 @@ def list_class_students_route(
     )
 
 
-@router.patch("/{class_id}", response_model=TeacherClassOut)
-@limiter.limit("10/minute")
-def update_teacher_class_route(
-    request: Request,
-    class_id: int,
-    update: TeacherClassUpdate,
-    db: Session = Depends(get_db),
-    current_user: Accounts = Depends(get_current_user)
-):
-    return update_teacher_class(
-        request=request,
-        class_id=class_id,
-        update=update,
-        db=db,
-        current_user=current_user
-    )
+# @router.patch("/{class_id}", response_model=TeacherClassOut)
+# @limiter.limit("10/minute")
+# def update_teacher_class_route(
+#     request: Request,
+#     class_id: int,
+#     update: TeacherClassUpdate,
+#     db: Session = Depends(get_db),
+#     current_user: Accounts = Depends(get_current_user)
+# ):
+#     return update_teacher_class(
+#         request=request,
+#         class_id=class_id,
+#         update=update,
+#         db=db,
+#         current_user=current_user
+#     )
 
 
 @router.delete("/{class_id}")

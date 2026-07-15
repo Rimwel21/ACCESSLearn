@@ -6,8 +6,8 @@ class StudentProfileBase(BaseModel):
     name: str = Field(min_length=5, max_length=100)
     age: int = Field(ge=1, le=120)
     sex: UserSex
-    grade_level: GradeLevel
-    section: str = Field(min_length=1, max_length=250)
+    grade_level_id: int
+    section_id: int
     student_type: StudentType
     guardians_name: str | None = None
     guardians_contact_no: str | None = None
@@ -19,7 +19,7 @@ class StudentProfileBase(BaseModel):
         if not isinstance(data, dict):
             return data
 
-        for field in ["name", "section", "guardians_name", "guardians_contact_no", "address"]:
+        for field in ["name", "guardians_name", "guardians_contact_no", "address"]:
             value = data.get(field)
             if isinstance(value, str):
                 data[field] = value.strip()
@@ -62,8 +62,8 @@ class StudentProfileUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=5, max_length=100)
     age: int | None = Field(default=None, ge=1, le=120)
     sex: UserSex | None = None
-    grade_level: GradeLevel | None = None
-    section: str | None = Field(default=None, min_length=1, max_length=250)
+    grade_level_id: int | None = None
+    section_id: int | None = None
     student_type: StudentType | None = None
     guardians_name: str | None = None
     guardians_contact_no: str | None = None
@@ -75,7 +75,7 @@ class StudentProfileUpdate(BaseModel):
         if not isinstance(data, dict):
             return data
 
-        for field in ["name", "section", "guardians_name", "guardians_contact_no", "address"]:
+        for field in ["name", "guardians_name", "guardians_contact_no", "address"]:
             value = data.get(field)
             if isinstance(value, str):
                 data[field] = value.strip()
@@ -109,13 +109,25 @@ class StudentProfileUpdate(BaseModel):
             raise ValueError("Contact number consists of 11 numbers.")
         return value
 
+class GradeLevelResponse(BaseModel):
+    name: str
+
+    class Config:
+        from_attributes = True
+
+class SectionResponse(BaseModel):
+    name: str
+
+    class Config:
+        from_attributes = True
+
 class StudentProfileOut(BaseModel):
     id: int
     name: str
     age: int | None = None
     sex: UserSex | None = None
-    grade_level: GradeLevel | None = None
-    section: str | None = None
+    grade_level: GradeLevelResponse
+    section: SectionResponse
     student_type: StudentType
     account_id: int
     profile_image_id: int | None = None
@@ -127,3 +139,4 @@ class StudentProfileOut(BaseModel):
 
     class Config:
         from_attributes = True
+

@@ -6,6 +6,7 @@ from slowapi.middleware import SlowAPIMiddleware
 from fastapi.middleware.cors import CORSMiddleware
 from routes.accounts_route import router as account_auth
 from routes.refresh_token import router as refresh_router
+from routes.academic_route import router as academic_router
 from routes.profile_route import router as account_profile
 from routes.teacher_class_route import router as teacher_classes
 from routes.teacher_module_route import router as teacher_modules
@@ -78,6 +79,7 @@ async def http_exception_with_cors(request: Request, exc: HTTPException):
     return response
 
 app.include_router(account_auth)
+app.include_router(academic_router)
 app.include_router(account_profile)
 app.include_router(refresh_router)
 app.include_router(teacher_classes)
