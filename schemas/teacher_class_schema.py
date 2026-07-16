@@ -1,5 +1,6 @@
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+from utils.options import ALLOWED_CLASS_SUBJECTS
 
 
 class TeacherClassBase(BaseModel):
@@ -11,7 +12,12 @@ class TeacherClassBase(BaseModel):
 
 
 class TeacherClassCreate(TeacherClassBase):
-    pass
+    @field_validator("subject")
+    @classmethod
+    def validate_subject(cls, value: str):
+        if value not in ALLOWED_CLASS_SUBJECTS:
+            raise ValueError(f"Subject must be one of: {', '.join(ALLOWED_CLASS_SUBJECTS)}")
+        return value
 
 
 class TeacherClassUpdate(BaseModel):
@@ -20,6 +26,13 @@ class TeacherClassUpdate(BaseModel):
     grade_level: str | None = Field(default=None, min_length=1, max_length=30)
     section: str | None = Field(default=None, min_length=1, max_length=50)
     school_year: str | None = Field(default=None, max_length=30)
+
+    @field_validator("subject")
+    @classmethod
+    def validate_subject(cls, value: str | None):
+        if value is not None and value not in ALLOWED_CLASS_SUBJECTS:
+            raise ValueError(f"Subject must be one of: {', '.join(ALLOWED_CLASS_SUBJECTS)}")
+        return value
 
 
 class TeacherClassOut(TeacherClassBase):
@@ -45,3 +58,28 @@ class ClassStudentOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class DashboardStudentProgressOut(BaseModel):
+    student_id: int
+    student_name: str
+    overall_percent: int
+    activities_completed: int
+    activities_total: int
+    status: str
+    last_activity: datetime | None = None
+    quiz_activity: str | None = None
+
+
+class RecentActivityOut(BaseModel):
+    id: str
+    text: str
+    occurred_at: datetime
+    activity_type: str
+
+
+class TeacherDashboardSummaryOut(BaseModel):
+    total_students: int
+    active_learning_materials: int
+    average_quiz_score: int
+    student_progress: list[DashboardStudentProgressOut] = []

@@ -22,6 +22,7 @@ class TeacherModule(Base):
     status = Column(String(20), default="Unpublished", nullable=False)
     behavior_required = Column(String(10), default="true", nullable=False)
     estimated_time = Column(String(30), nullable=True)
+    due_at = Column(DateTime(timezone=True), nullable=True)
 
     teacher_account = relationship("Accounts", back_populates="teacher_modules")
     teacher_class = relationship("TeacherClass", back_populates="modules")

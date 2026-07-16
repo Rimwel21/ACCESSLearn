@@ -22,6 +22,7 @@ class TeacherAssessment(Base):
     shuffle_questions = Column(String(10), default="true", nullable=False)
     show_answers_after_submission = Column(String(10), default="true", nullable=False)
     questions = Column(JSON, default=list, nullable=False)
+    due_at = Column(DateTime(timezone=True), nullable=True)
 
     teacher_account = relationship("Accounts", back_populates="teacher_assessments")
     teacher_class = relationship("TeacherClass")
