@@ -710,7 +710,7 @@ def _extract_pdf_text(path: Path):
         from pypdf import PdfReader
     except ImportError:
         try:
-            from PyPDF2 import PdfReader
+            from pypdf import PdfReader
         except ImportError:
             return ""
 

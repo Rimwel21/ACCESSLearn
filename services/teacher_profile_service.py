@@ -5,6 +5,7 @@ from models.accounts import Accounts
 from models.teacher_profile import TeacherProfile
 from models.teacher_grade_handles import TeacherGradeHandles
 from schemas.teacher_profile_schema import TeacherProfileCreate, TeacherProfileUpdate
+from services.academic_service import get_grade_level_or_404
 
 def create_teacher_profile(request: Request, teacher: TeacherProfileCreate, db: Session, current_user: Accounts):
     if current_user.role != RoleEnum.teacher:
@@ -28,9 +29,10 @@ def create_teacher_profile(request: Request, teacher: TeacherProfileCreate, db: 
     db.add(new_teacher_profile)
     db.flush()
 
-    for grade in teacher.grade_level_handles:
+    for grade_level_id in teacher.grade_level_ids:
+        get_grade_level_or_404(grade_level_id, db)
         db.add(TeacherGradeHandles(
-            grade_level_handles=grade,
+            grade_level_id=grade_level_id,
             teacher_id=new_teacher_profile.id
         ))
 
@@ -38,7 +40,7 @@ def create_teacher_profile(request: Request, teacher: TeacherProfileCreate, db: 
 
     return (
         db.query(TeacherProfile)
-        .options(joinedload(TeacherProfile.handle_grade_levels))
+        .options(joinedload(TeacherProfile.handle_grade_levels).joinedload(TeacherGradeHandles.grade_level))
         .filter(TeacherProfile.id == new_teacher_profile.id)
         .first()
     )
@@ -52,19 +54,20 @@ def update_teacher_profile(request: Request, update: TeacherProfileUpdate, db: S
     if not teacher_profile:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Teacher profile not found")
     
-    update_profile = update.model_dump(exclude_unset=True, exclude={"grade_level_handles"})
+    update_profile = update.model_dump(exclude_unset=True, exclude={"grade_level_ids"})
 
     for key, value in update_profile.items():
         setattr(teacher_profile, key, value)
 
-    if update.grade_level_handles is not None:
+    if update.grade_level_ids is not None:
         db.query(TeacherGradeHandles).filter(
             TeacherGradeHandles.teacher_id == teacher_profile.id
         ).delete()
 
-        for grade in update.grade_level_handles:
+        for grade_level_id in update.grade_level_ids:
+            get_grade_level_or_404(grade_level_id, db)
             db.add(TeacherGradeHandles(
-                grade_level_handles=grade,
+                grade_level_id=grade_level_id,
                 teacher_id=teacher_profile.id
             ))
     
@@ -72,7 +75,7 @@ def update_teacher_profile(request: Request, update: TeacherProfileUpdate, db: S
 
     return (
         db.query(TeacherProfile)
-        .options(joinedload(TeacherProfile.handle_grade_levels))
+        .options(joinedload(TeacherProfile.handle_grade_levels).joinedload(TeacherGradeHandles.grade_level))
         .filter(TeacherProfile.id == teacher_profile.id)
         .first()
     )
@@ -83,7 +86,7 @@ def get_teacher_profile(request: Request, db: Session, current_user: Accounts):
 
     teacher_profile = (
         db.query(TeacherProfile)
-        .options(joinedload(TeacherProfile.handle_grade_levels))
+        .options(joinedload(TeacherProfile.handle_grade_levels).joinedload(TeacherGradeHandles.grade_level))
         .filter(TeacherProfile.account_id == current_user.id)
         .first()
     )

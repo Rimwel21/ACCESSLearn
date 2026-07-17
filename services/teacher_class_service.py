@@ -1,7 +1,7 @@
 from fastapi import HTTPException, Request, status
-from sqlalchemy import func, or_
+from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from models.accounts import Accounts
 from models.learning_topic import LearningTopic
 from models.student_progress import StudentTopicProgress
@@ -10,7 +10,10 @@ from models.student_quiz_progress import StudentQuizProgress
 from models.teacher_assessment import TeacherAssessment
 from models.teacher_class import TeacherClass
 from models.teacher_module import TeacherModule
-from schemas.teacher_class_schema import TeacherClassCreate, TeacherClassUpdate
+from models.grade_levels import GradeLevels
+from models.HI_sections import HI_SECTIONS
+from schemas.teacher_class_schema import TeacherClassCreate
+from services.academic_service import get_grade_level_or_404, get_section_for_grade_or_400
 from utils.enum import RoleEnum
 
 
@@ -24,6 +27,12 @@ def list_teacher_classes(request: Request, db: Session, current_user: Accounts):
 
     classes = (
         db.query(TeacherClass)
+        .options(
+            joinedload(TeacherClass.grade_levels),
+            joinedload(TeacherClass.sections)
+        )
+        .join(GradeLevels, TeacherClass.grade_level_id == GradeLevels.id)
+        .join(HI_SECTIONS, TeacherClass.section_id == HI_SECTIONS.id)
         .filter(TeacherClass.teacher_id == current_user.id)
         .order_by(TeacherClass.created_at.desc())
         .all()
@@ -36,12 +45,15 @@ def list_teacher_classes(request: Request, db: Session, current_user: Accounts):
 def create_teacher_class(request: Request, teacher_class: TeacherClassCreate, db: Session, current_user: Accounts):
     _ensure_teacher(current_user)
 
+    get_grade_level_or_404(teacher_class.grade_level_id, db)
+    get_section_for_grade_or_400(teacher_class.section_id, teacher_class.grade_level_id, db)
+
     new_teacher_class = TeacherClass(
         teacher_id=current_user.id,
         class_name=teacher_class.class_name.strip(),
         subject=teacher_class.subject.strip(),
-        grade_level=_grade_value(teacher_class.grade_level),
-        section=_normalize_section(teacher_class.section),
+        grade_level_id=teacher_class.grade_level_id,
+        section_id=teacher_class.section_id,
         school_year=teacher_class.school_year.strip() if teacher_class.school_year else None,
     )
 
@@ -59,7 +71,17 @@ def create_teacher_class(request: Request, teacher_class: TeacherClassCreate, db
     db.refresh(new_teacher_class)
     new_teacher_class.student_count = _count_matching_students(new_teacher_class, db)
 
-    return new_teacher_class
+    result = (
+        db.query(TeacherClass)
+        .options(
+            joinedload(TeacherClass.grade_levels),
+            joinedload(TeacherClass.sections)
+        )
+        .filter(TeacherClass.id == new_teacher_class.id)
+        .first()
+        )
+
+    return result
 
 
 def get_teacher_class(request: Request, class_id: int, db: Session, current_user: Accounts):
@@ -67,6 +89,12 @@ def get_teacher_class(request: Request, class_id: int, db: Session, current_user
 
     teacher_class = (
         db.query(TeacherClass)
+        .options(
+            joinedload(TeacherClass.grade_levels),
+            joinedload(TeacherClass.sections)
+        )
+        .join(GradeLevels, TeacherClass.grade_level_id == GradeLevels.id)
+        .join(HI_SECTIONS, TeacherClass.section_id == HI_SECTIONS.id)
         .filter(TeacherClass.id == class_id, TeacherClass.teacher_id == current_user.id)
         .first()
     )
@@ -75,38 +103,6 @@ def get_teacher_class(request: Request, class_id: int, db: Session, current_user
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Class not found")
 
     teacher_class.student_count = _count_matching_students(teacher_class, db)
-    return teacher_class
-
-
-def update_teacher_class(request: Request, class_id: int, update: TeacherClassUpdate, db: Session, current_user: Accounts):
-    teacher_class = get_teacher_class(
-        request=request,
-        class_id=class_id,
-        db=db,
-        current_user=current_user
-    )
-
-    update_data = update.model_dump(exclude_unset=True)
-
-    for key, value in update_data.items():
-        if key == "grade_level" and value is not None:
-            value = _grade_value(value)
-        if key == "section" and isinstance(value, str):
-            value = _normalize_section(value)
-        setattr(teacher_class, key, value.strip() if isinstance(value, str) else value)
-
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Class already exists for this teacher, subject, grade level, and section"
-        )
-
-    db.refresh(teacher_class)
-    teacher_class.student_count = _count_matching_students(teacher_class, db)
-
     return teacher_class
 
 
@@ -231,10 +227,14 @@ def list_recent_activities(request: Request, limit: int, db: Session, current_us
 def _matching_student_query(teacher_class: TeacherClass, db: Session):
     return (
         db.query(StudentProfile)
+        .options(
+            joinedload(StudentProfile.grade_level),
+            joinedload(StudentProfile.section)
+        )
         .join(Accounts, Accounts.id == StudentProfile.account_id)
         .filter(
-            StudentProfile.grade_level == teacher_class.grade_level,
-            func.lower(func.trim(StudentProfile.section)) == _normalize_section(teacher_class.section).lower(),
+            StudentProfile.grade_level_id == teacher_class.grade_level_id,
+            StudentProfile.section_id == teacher_class.section_id,
             Accounts.role == RoleEnum.student,
         )
         .order_by(StudentProfile.name.asc())
@@ -250,9 +250,9 @@ def _unique_students_for_classes(classes: list[TeacherClass], db: Session):
     for teacher_class in classes:
         filters.append(
             (
-                StudentProfile.grade_level == teacher_class.grade_level
+                StudentProfile.grade_level_id == teacher_class.grade_level_id
             ) & (
-                func.lower(func.trim(StudentProfile.section)) == _normalize_section(teacher_class.section).lower()
+                StudentProfile.section_id == teacher_class.section_id
             )
         )
     if not filters:
@@ -299,12 +299,10 @@ def _average_quiz_score(student_ids: list[int], class_ids: list[int], db: Sessio
 
 
 def _dashboard_progress_for_student(student: StudentProfile, classes: list[TeacherClass], db: Session, current_user: Accounts):
-    student_grade = _grade_value(student.grade_level)
-    student_section = _normalize_section(student.section or "")
     matching_class_ids = [
         teacher_class.id for teacher_class in classes
-        if teacher_class.grade_level == student_grade
-        and _normalize_section(teacher_class.section) == student_section
+        if teacher_class.grade_level_id == student.grade_level_id
+        and teacher_class.section_id == student.section_id
     ]
     if not matching_class_ids:
         total_items = 0
@@ -395,9 +393,3 @@ def _format_quiz_activity(progress: StudentQuizProgress, db: Session):
     return assessment.title
 
 
-def _grade_value(grade_level):
-    return getattr(grade_level, "value", grade_level)
-
-
-def _normalize_section(section: str):
-    return " ".join(section.strip().split()).upper()

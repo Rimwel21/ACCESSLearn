@@ -1,6 +1,5 @@
 from pathlib import Path
 from fastapi import HTTPException, Request, status
-from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 from models.accounts import Accounts
 from models.learning_topic import LearningTopic
@@ -25,8 +24,6 @@ def list_student_modules(request: Request, db: Session, current_user: Accounts):
     profile = _get_student_profile(db, current_user)
     if not profile or not profile.grade_level or not profile.section:
         return []
-    grade_level = _grade_value(profile.grade_level)
-    section = _normalize_section(profile.section)
 
     modules = (
         db.query(TeacherModule)
@@ -34,8 +31,8 @@ def list_student_modules(request: Request, db: Session, current_user: Accounts):
         .options(joinedload(TeacherModule.topics), joinedload(TeacherModule.assessments))
         .filter(
             TeacherModule.status == "Published",
-            TeacherClass.grade_level == grade_level,
-            func.lower(func.trim(TeacherClass.section)) == section.lower(),
+            TeacherClass.grade_level_id == profile.grade_level_id,
+            TeacherClass.section_id == profile.section_id,
         )
         .order_by(TeacherModule.created_at.asc())
         .all()
@@ -49,8 +46,6 @@ def list_upcoming_deadlines(request: Request, db: Session, current_user: Account
     profile = _get_student_profile(db, current_user)
     if not profile or not profile.grade_level or not profile.section:
         return []
-    grade_level = _grade_value(profile.grade_level)
-    section = _normalize_section(profile.section)
     now = utc_now()
 
     modules = (
@@ -60,8 +55,8 @@ def list_upcoming_deadlines(request: Request, db: Session, current_user: Account
             TeacherModule.status == "Published",
             TeacherModule.due_at.isnot(None),
             TeacherModule.due_at >= now,
-            TeacherClass.grade_level == grade_level,
-            func.lower(func.trim(TeacherClass.section)) == section.lower(),
+            TeacherClass.grade_level_id == profile.grade_level_id,
+            TeacherClass.section_id == profile.section_id,
         )
         .all()
     )
@@ -73,8 +68,8 @@ def list_upcoming_deadlines(request: Request, db: Session, current_user: Account
             TeacherAssessment.class_id.isnot(None),
             TeacherAssessment.due_at.isnot(None),
             TeacherAssessment.due_at >= now,
-            TeacherClass.grade_level == grade_level,
-            func.lower(func.trim(TeacherClass.section)) == section.lower(),
+            TeacherClass.grade_level_id == profile.grade_level_id,
+            TeacherClass.section_id == profile.section_id,
         )
         .all()
     )
@@ -87,8 +82,8 @@ def list_upcoming_deadlines(request: Request, db: Session, current_user: Account
             TeacherAssessment.due_at.isnot(None),
             TeacherAssessment.due_at >= now,
             TeacherModule.status == "Published",
-            TeacherClass.grade_level == grade_level,
-            func.lower(func.trim(TeacherClass.section)) == section.lower(),
+            TeacherClass.grade_level_id == profile.grade_level_id,
+            TeacherClass.section_id == profile.section_id,
         )
         .all()
     )
@@ -136,8 +131,6 @@ def list_student_activities(request: Request, db: Session, current_user: Account
     profile = _get_student_profile(db, current_user)
     if not profile or not profile.grade_level or not profile.section:
         return []
-    grade_level = _grade_value(profile.grade_level)
-    section = _normalize_section(profile.section)
 
     activities = (
         db.query(TeacherAssessment)
@@ -145,8 +138,8 @@ def list_student_activities(request: Request, db: Session, current_user: Account
         .filter(
             TeacherAssessment.assessment_type == "activity",
             TeacherAssessment.class_id.isnot(None),
-            TeacherClass.grade_level == grade_level,
-            func.lower(func.trim(TeacherClass.section)) == section.lower(),
+            TeacherClass.grade_level_id == profile.grade_level_id,
+            TeacherClass.section_id == profile.section_id,
         )
         .order_by(TeacherAssessment.created_at.asc())
         .all()
@@ -159,8 +152,6 @@ def get_student_activity(request: Request, activity_id: int, db: Session, curren
     profile = _get_student_profile(db, current_user)
     if not profile or not profile.grade_level or not profile.section:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Activity not found")
-    grade_level = _grade_value(profile.grade_level)
-    section = _normalize_section(profile.section)
 
     activity = (
         db.query(TeacherAssessment)
@@ -169,8 +160,8 @@ def get_student_activity(request: Request, activity_id: int, db: Session, curren
             TeacherAssessment.id == activity_id,
             TeacherAssessment.assessment_type == "activity",
             TeacherAssessment.class_id.isnot(None),
-            TeacherClass.grade_level == grade_level,
-            func.lower(func.trim(TeacherClass.section)) == section.lower(),
+            TeacherClass.grade_level_id == profile.grade_level_id,
+            TeacherClass.section_id == profile.section_id,
         )
         .first()
     )
@@ -184,8 +175,6 @@ def get_student_module(request: Request, module_id: int, db: Session, current_us
     profile = _get_student_profile(db, current_user)
     if not profile or not profile.grade_level or not profile.section:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Module not found")
-    grade_level = _grade_value(profile.grade_level)
-    section = _normalize_section(profile.section)
 
     module = (
         db.query(TeacherModule)
@@ -194,8 +183,8 @@ def get_student_module(request: Request, module_id: int, db: Session, current_us
         .filter(
             TeacherModule.id == module_id,
             TeacherModule.status == "Published",
-            TeacherClass.grade_level == grade_level,
-            func.lower(func.trim(TeacherClass.section)) == section.lower(),
+            TeacherClass.grade_level_id == profile.grade_level_id,
+            TeacherClass.section_id == profile.section_id,
         )
         .first()
     )
@@ -419,15 +408,21 @@ def submit_class_activity_progress(request: Request, activity_id: int, answers: 
 
 
 def _get_student_profile(db: Session, current_user: Accounts):
-    return db.query(StudentProfile).filter(StudentProfile.account_id == current_user.id).first()
+    return (
+        db.query(StudentProfile)
+        .options(
+            joinedload(StudentProfile.grade_level),
+            joinedload(StudentProfile.section)
+        )
+        .filter(StudentProfile.account_id == current_user.id)
+        .first()
+    )
 
 
 def _ensure_enrolled_module(module_id: int, db: Session, current_user: Accounts):
     profile = _get_student_profile(db, current_user)
     if not profile or not profile.grade_level or not profile.section:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Module not found")
-    grade_level = _grade_value(profile.grade_level)
-    section = _normalize_section(profile.section)
 
     module = (
         db.query(TeacherModule.id)
@@ -435,8 +430,8 @@ def _ensure_enrolled_module(module_id: int, db: Session, current_user: Accounts)
         .filter(
             TeacherModule.id == module_id,
             TeacherModule.status == "Published",
-            TeacherClass.grade_level == grade_level,
-            func.lower(func.trim(TeacherClass.section)) == section.lower(),
+            TeacherClass.grade_level_id == profile.grade_level_id,
+            TeacherClass.section_id == profile.section_id,
         )
         .first()
     )
@@ -511,14 +506,6 @@ def _string_to_bool(value):
     if isinstance(value, bool):
         return value
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _grade_value(grade_level):
-    return getattr(grade_level, "value", grade_level)
-
-
-def _normalize_section(section: str):
-    return " ".join(section.strip().split()).upper()
 
 
 def _ensure_topics(db: Session, modules: list[TeacherModule]):

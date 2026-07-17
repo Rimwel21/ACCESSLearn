@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import models  # noqa: F401 - register SQLAlchemy relationship targets before routes query
 from routes.accounts_route import router as account_auth
 from routes.refresh_token import router as refresh_router
+from routes.academic_route import router as academic_router
 from routes.profile_route import router as account_profile
 from routes.teacher_class_route import router as teacher_classes
 from routes.teacher_module_route import router as teacher_modules
@@ -90,6 +91,7 @@ async def unhandled_exception_with_cors(request: Request, exc: Exception):
     return response
 
 app.include_router(account_auth)
+app.include_router(academic_router)
 app.include_router(account_profile)
 app.include_router(refresh_router)
 app.include_router(teacher_classes)
