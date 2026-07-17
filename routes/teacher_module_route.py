@@ -1,3 +1,4 @@
+from datetime import datetime
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from sqlalchemy.orm import Session
 from limiter import limiter
@@ -41,8 +42,8 @@ async def create_teacher_module_upload_route(
     week: str = Form(...),
     status_value: str = Form("Unpublished"),
     behavior_required: bool = Form(True),
-    estimated_time: str | None = Form(None),
     class_id: int | None = Form(None),
+    due_at: datetime | None = Form(None),
     material_file: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user: Accounts = Depends(get_current_user)
@@ -55,8 +56,8 @@ async def create_teacher_module_upload_route(
         week=week,
         status_value=status_value,
         behavior_required=behavior_required,
-        estimated_time=estimated_time,
         class_id=class_id,
+        due_at=due_at,
         material_file=material_file,
         db=db,
         current_user=current_user

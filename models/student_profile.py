@@ -2,7 +2,7 @@ from sqlalchemy import Column, Integer, String, ForeignKey, Enum, DateTime
 from sqlalchemy.orm import relationship
 from database.connection import Base
 from utils.utc_now import utc_now
-from utils.enum import StudentType, GradeLevel, UserSex
+from utils.enum import StudentType, UserSex
 
 class StudentProfile(Base):
     __tablename__ = "student_profiles"
@@ -15,9 +15,13 @@ class StudentProfile(Base):
 
     sex = Column(Enum(UserSex), nullable=True)
 
-    grade_level = Column(Enum(GradeLevel), nullable=True)
+    # relationship sa grade level table
+    grade_level_id = Column(Integer, ForeignKey("grade_levels.id"), nullable=False, index=True)
+    grade_level = relationship("GradeLevels", back_populates="students")
 
-    section = Column(String(250), nullable=True)
+    # relationship sa hearing_impaired_section table
+    section_id = Column(Integer, ForeignKey("hi_sections.id"), nullable=False, index=True)
+    section = relationship("HI_SECTIONS", back_populates="students")
 
     student_type = Column(Enum(StudentType), nullable=False)
 

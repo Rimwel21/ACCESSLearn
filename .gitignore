@@ -21,3 +21,4 @@ alembic/versions/__pycache__/
 # personal file
 delete_user.py
 practice.py
+python_seed.py

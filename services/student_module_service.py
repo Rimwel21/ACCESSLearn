@@ -1,6 +1,5 @@
 from pathlib import Path
 from fastapi import HTTPException, Request, status
-from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 from models.accounts import Accounts
 from models.learning_topic import LearningTopic
@@ -25,8 +24,6 @@ def list_student_modules(request: Request, db: Session, current_user: Accounts):
     profile = _get_student_profile(db, current_user)
     if not profile or not profile.grade_level or not profile.section:
         return []
-    grade_level = _grade_value(profile.grade_level)
-    section = _normalize_section(profile.section)
 
     modules = (
         db.query(TeacherModule)
@@ -34,8 +31,8 @@ def list_student_modules(request: Request, db: Session, current_user: Accounts):
         .options(joinedload(TeacherModule.topics), joinedload(TeacherModule.assessments))
         .filter(
             TeacherModule.status == "Published",
-            TeacherClass.grade_level == grade_level,
-            func.lower(func.trim(TeacherClass.section)) == section.lower(),
+            TeacherClass.grade_level_id == profile.grade_level_id,
+            TeacherClass.section_id == profile.section_id,
         )
         .order_by(TeacherModule.created_at.asc())
         .all()
@@ -44,26 +41,110 @@ def list_student_modules(request: Request, db: Session, current_user: Accounts):
     return modules
 
 
-def list_student_activities(request: Request, db: Session, current_user: Accounts):
+def list_upcoming_deadlines(request: Request, db: Session, current_user: Accounts):
     _ensure_student(current_user)
     profile = _get_student_profile(db, current_user)
     if not profile or not profile.grade_level or not profile.section:
         return []
-    grade_level = _grade_value(profile.grade_level)
-    section = _normalize_section(profile.section)
+    now = utc_now()
 
-    return (
+    modules = (
+        db.query(TeacherModule)
+        .join(TeacherClass, TeacherClass.id == TeacherModule.class_id)
+        .filter(
+            TeacherModule.status == "Published",
+            TeacherModule.due_at.isnot(None),
+            TeacherModule.due_at >= now,
+            TeacherClass.grade_level_id == profile.grade_level_id,
+            TeacherClass.section_id == profile.section_id,
+        )
+        .all()
+    )
+    class_activities = (
         db.query(TeacherAssessment)
         .join(TeacherClass, TeacherClass.id == TeacherAssessment.class_id)
         .filter(
             TeacherAssessment.assessment_type == "activity",
             TeacherAssessment.class_id.isnot(None),
-            TeacherClass.grade_level == grade_level,
-            func.lower(func.trim(TeacherClass.section)) == section.lower(),
+            TeacherAssessment.due_at.isnot(None),
+            TeacherAssessment.due_at >= now,
+            TeacherClass.grade_level_id == profile.grade_level_id,
+            TeacherClass.section_id == profile.section_id,
+        )
+        .all()
+    )
+    module_quizzes = (
+        db.query(TeacherAssessment)
+        .join(TeacherModule, TeacherModule.id == TeacherAssessment.module_id)
+        .join(TeacherClass, TeacherClass.id == TeacherModule.class_id)
+        .filter(
+            TeacherAssessment.assessment_type == "quiz",
+            TeacherAssessment.due_at.isnot(None),
+            TeacherAssessment.due_at >= now,
+            TeacherModule.status == "Published",
+            TeacherClass.grade_level_id == profile.grade_level_id,
+            TeacherClass.section_id == profile.section_id,
+        )
+        .all()
+    )
+
+    completed_assessment_ids = {
+        row.assessment_id for row in db.query(StudentQuizProgress.assessment_id)
+        .filter(
+            StudentQuizProgress.student_id == current_user.id,
+            StudentQuizProgress.status == "completed",
+        )
+        .all()
+    }
+
+    deadlines = []
+    for module in modules:
+        if _is_module_complete(request, module.id, db, current_user):
+            continue
+        deadlines.append({
+            "id": f"module-{module.id}",
+            "title": module.title,
+            "item_type": "Learning Material",
+            "due_at": module.due_at,
+            "module_id": module.id,
+            "assessment_id": None,
+        })
+
+    for assessment in module_quizzes + class_activities:
+        if assessment.id in completed_assessment_ids:
+            continue
+        deadlines.append({
+            "id": f"{assessment.assessment_type}-{assessment.id}",
+            "title": assessment.title,
+            "item_type": "Quiz" if assessment.assessment_type == "quiz" else "Activity",
+            "due_at": assessment.due_at,
+            "module_id": assessment.module_id,
+            "assessment_id": assessment.id,
+        })
+
+    deadlines.sort(key=lambda item: item["due_at"])
+    return deadlines
+
+
+def list_student_activities(request: Request, db: Session, current_user: Accounts):
+    _ensure_student(current_user)
+    profile = _get_student_profile(db, current_user)
+    if not profile or not profile.grade_level or not profile.section:
+        return []
+
+    activities = (
+        db.query(TeacherAssessment)
+        .join(TeacherClass, TeacherClass.id == TeacherAssessment.class_id)
+        .filter(
+            TeacherAssessment.assessment_type == "activity",
+            TeacherAssessment.class_id.isnot(None),
+            TeacherClass.grade_level_id == profile.grade_level_id,
+            TeacherClass.section_id == profile.section_id,
         )
         .order_by(TeacherAssessment.created_at.asc())
         .all()
     )
+    return [_assessment_to_dict(activity) for activity in activities]
 
 
 def get_student_activity(request: Request, activity_id: int, db: Session, current_user: Accounts):
@@ -71,8 +152,6 @@ def get_student_activity(request: Request, activity_id: int, db: Session, curren
     profile = _get_student_profile(db, current_user)
     if not profile or not profile.grade_level or not profile.section:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Activity not found")
-    grade_level = _grade_value(profile.grade_level)
-    section = _normalize_section(profile.section)
 
     activity = (
         db.query(TeacherAssessment)
@@ -81,14 +160,14 @@ def get_student_activity(request: Request, activity_id: int, db: Session, curren
             TeacherAssessment.id == activity_id,
             TeacherAssessment.assessment_type == "activity",
             TeacherAssessment.class_id.isnot(None),
-            TeacherClass.grade_level == grade_level,
-            func.lower(func.trim(TeacherClass.section)) == section.lower(),
+            TeacherClass.grade_level_id == profile.grade_level_id,
+            TeacherClass.section_id == profile.section_id,
         )
         .first()
     )
     if not activity:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Activity not found")
-    return activity
+    return _assessment_to_dict(activity)
 
 
 def get_student_module(request: Request, module_id: int, db: Session, current_user: Accounts):
@@ -96,8 +175,6 @@ def get_student_module(request: Request, module_id: int, db: Session, current_us
     profile = _get_student_profile(db, current_user)
     if not profile or not profile.grade_level or not profile.section:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Module not found")
-    grade_level = _grade_value(profile.grade_level)
-    section = _normalize_section(profile.section)
 
     module = (
         db.query(TeacherModule)
@@ -106,8 +183,8 @@ def get_student_module(request: Request, module_id: int, db: Session, current_us
         .filter(
             TeacherModule.id == module_id,
             TeacherModule.status == "Published",
-            TeacherClass.grade_level == grade_level,
-            func.lower(func.trim(TeacherClass.section)) == section.lower(),
+            TeacherClass.grade_level_id == profile.grade_level_id,
+            TeacherClass.section_id == profile.section_id,
         )
         .first()
     )
@@ -125,6 +202,7 @@ def get_module_progress(request: Request, module_id: int, db: Session, current_u
         topic.id for topic in db.query(LearningTopic.id)
         .join(TeacherModule, TeacherModule.id == LearningTopic.module_id)
         .filter(TeacherModule.id == module_id, TeacherModule.status == "Published")
+        .order_by(LearningTopic.sort_order.asc(), LearningTopic.id.asc())
         .all()
     ]
     quiz_ids = [
@@ -153,15 +231,17 @@ def get_module_progress(request: Request, module_id: int, db: Session, current_u
         )
         .all()
     ]
-    completed = len(set(completed_ids) & set(topic_ids))
+    current_completed_topic_ids = sorted(set(completed_ids) & set(topic_ids))
+    current_completed_quiz_ids = sorted(set(completed_quiz_ids) & set(quiz_ids))
+    completed = len(current_completed_topic_ids)
     total = len(topic_ids)
-    completed_quizzes = len(set(completed_quiz_ids) & set(quiz_ids))
+    completed_quizzes = len(current_completed_quiz_ids)
     total_quizzes = len(quiz_ids)
     total_items = total + total_quizzes
     completed_items = completed + completed_quizzes
     return {
-        "completed_topic_ids": completed_ids,
-        "completed_quiz_ids": completed_quiz_ids,
+        "completed_topic_ids": current_completed_topic_ids,
+        "completed_quiz_ids": current_completed_quiz_ids,
         "total_topics": total,
         "completed_topics": completed,
         "total_quizzes": total_quizzes,
@@ -184,6 +264,7 @@ def update_topic_progress(request: Request, module_id: int, topic_id: int, statu
     )
     if not topic:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Topic not found")
+    _ensure_topic_unlocked(module_id, topic_id, db, current_user)
 
     progress = db.query(StudentTopicProgress).filter(
         StudentTopicProgress.student_id == current_user.id,
@@ -199,6 +280,8 @@ def update_topic_progress(request: Request, module_id: int, topic_id: int, statu
         )
         db.add(progress)
     else:
+        if progress.status == "completed" and status_value != "completed":
+            return get_module_progress(request, module_id, db, current_user)
         progress.status = status_value
 
     if status_value == "completed":
@@ -325,15 +408,21 @@ def submit_class_activity_progress(request: Request, activity_id: int, answers: 
 
 
 def _get_student_profile(db: Session, current_user: Accounts):
-    return db.query(StudentProfile).filter(StudentProfile.account_id == current_user.id).first()
+    return (
+        db.query(StudentProfile)
+        .options(
+            joinedload(StudentProfile.grade_level),
+            joinedload(StudentProfile.section)
+        )
+        .filter(StudentProfile.account_id == current_user.id)
+        .first()
+    )
 
 
 def _ensure_enrolled_module(module_id: int, db: Session, current_user: Accounts):
     profile = _get_student_profile(db, current_user)
     if not profile or not profile.grade_level or not profile.section:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Module not found")
-    grade_level = _grade_value(profile.grade_level)
-    section = _normalize_section(profile.section)
 
     module = (
         db.query(TeacherModule.id)
@@ -341,8 +430,8 @@ def _ensure_enrolled_module(module_id: int, db: Session, current_user: Accounts)
         .filter(
             TeacherModule.id == module_id,
             TeacherModule.status == "Published",
-            TeacherClass.grade_level == grade_level,
-            func.lower(func.trim(TeacherClass.section)) == section.lower(),
+            TeacherClass.grade_level_id == profile.grade_level_id,
+            TeacherClass.section_id == profile.section_id,
         )
         .first()
     )
@@ -350,16 +439,73 @@ def _ensure_enrolled_module(module_id: int, db: Session, current_user: Accounts)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Module not found")
 
 
+def _ensure_topic_unlocked(module_id: int, topic_id: int, db: Session, current_user: Accounts):
+    topic_ids = [
+        row.id for row in db.query(LearningTopic.id)
+        .filter(LearningTopic.module_id == module_id)
+        .order_by(LearningTopic.sort_order.asc(), LearningTopic.id.asc())
+        .all()
+    ]
+    try:
+        topic_index = topic_ids.index(topic_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Topic not found")
+
+    if topic_index == 0:
+        return
+
+    previous_topic_id = topic_ids[topic_index - 1]
+    previous_completed = db.query(StudentTopicProgress.id).filter(
+        StudentTopicProgress.student_id == current_user.id,
+        StudentTopicProgress.module_id == module_id,
+        StudentTopicProgress.topic_id == previous_topic_id,
+        StudentTopicProgress.status == "completed",
+    ).first()
+    if not previous_completed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Complete the previous topic before opening this topic",
+        )
+
+
+def _is_module_complete(request: Request, module_id: int, db: Session, current_user: Accounts):
+    progress = get_module_progress(request, module_id, db, current_user)
+    total_items = progress["total_topics"] + progress["total_quizzes"]
+    completed_items = progress["completed_topics"] + progress["completed_quizzes"]
+    return total_items > 0 and completed_items == total_items
+
+
 def _normalize_answer(value: str):
     return " ".join(value.strip().lower().split())
 
 
-def _grade_value(grade_level):
-    return getattr(grade_level, "value", grade_level)
+def _assessment_to_dict(assessment: TeacherAssessment):
+    return {
+        "id": assessment.id,
+        "teacher_id": assessment.teacher_id,
+        "class_id": assessment.class_id,
+        "module_id": assessment.module_id,
+        "topic_id": assessment.topic_id,
+        "assessment_type": assessment.assessment_type,
+        "title": assessment.title,
+        "description": assessment.description,
+        "category": assessment.category,
+        "week": assessment.week,
+        "time_limit": assessment.time_limit,
+        "attempts_allowed": assessment.attempts_allowed,
+        "shuffle_questions": _string_to_bool(assessment.shuffle_questions),
+        "show_answers_after_submission": _string_to_bool(assessment.show_answers_after_submission),
+        "questions": assessment.questions or [],
+        "due_at": assessment.due_at,
+        "created_at": assessment.created_at,
+        "updated_at": assessment.updated_at,
+    }
 
 
-def _normalize_section(section: str):
-    return " ".join(section.strip().split()).upper()
+def _string_to_bool(value):
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _ensure_topics(db: Session, modules: list[TeacherModule]):

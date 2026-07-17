@@ -1,5 +1,6 @@
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+from utils.options import ALLOWED_LEARNING_WEEKS
 
 
 class AssessmentQuestion(BaseModel):
@@ -20,10 +21,18 @@ class TeacherAssessmentBase(BaseModel):
     shuffle_questions: bool = True
     show_answers_after_submission: bool = True
     questions: list[AssessmentQuestion] = Field(default_factory=list)
+    due_at: datetime | None = None
 
 
 class TeacherAssessmentCreate(TeacherAssessmentBase):
     assessment_type: str = Field(pattern="^(quiz|activity)$")
+
+    @field_validator("week")
+    @classmethod
+    def validate_week(cls, value: str | None):
+        if value is not None and value not in ALLOWED_LEARNING_WEEKS:
+            raise ValueError(f"Week must be one of: {', '.join(ALLOWED_LEARNING_WEEKS)}")
+        return value
 
 
 class TeacherAssessmentUpdate(BaseModel):
@@ -39,6 +48,14 @@ class TeacherAssessmentUpdate(BaseModel):
     shuffle_questions: bool | None = None
     show_answers_after_submission: bool | None = None
     questions: list[AssessmentQuestion] | None = None
+    due_at: datetime | None = None
+
+    @field_validator("week")
+    @classmethod
+    def validate_week(cls, value: str | None):
+        if value is not None and value not in ALLOWED_LEARNING_WEEKS:
+            raise ValueError(f"Week must be one of: {', '.join(ALLOWED_LEARNING_WEEKS)}")
+        return value
 
 
 class TeacherAssessmentOut(TeacherAssessmentBase):

@@ -7,6 +7,7 @@ from models.teacher_class import TeacherClass
 from models.teacher_module import TeacherModule
 from schemas.teacher_assessment_schema import TeacherAssessmentCreate, TeacherAssessmentUpdate
 from utils.enum import RoleEnum
+from utils.options import ALLOWED_LEARNING_WEEKS
 
 
 def _ensure_teacher(current_user: Accounts):
@@ -33,6 +34,7 @@ def list_teacher_assessments(request: Request, assessment_type: str, db: Session
 def create_teacher_assessment(request: Request, assessment: TeacherAssessmentCreate, db: Session, current_user: Accounts):
     _ensure_teacher(current_user)
     _validate_assessment_assignment(assessment, db, current_user)
+    _validate_week(assessment.week)
 
     new_assessment = TeacherAssessment(
         teacher_id=current_user.id,
@@ -49,6 +51,7 @@ def create_teacher_assessment(request: Request, assessment: TeacherAssessmentCre
         shuffle_questions=str(assessment.shuffle_questions).lower(),
         show_answers_after_submission=str(assessment.show_answers_after_submission).lower(),
         questions=[question.model_dump() for question in assessment.questions],
+        due_at=assessment.due_at,
     )
 
     db.add(new_assessment)
@@ -68,6 +71,8 @@ def update_teacher_assessment(request: Request, assessment_id: int, update: Teac
     assessment_type = update_data.get("assessment_type", assessment.assessment_type)
     if any(key in update_data for key in {"class_id", "module_id", "topic_id"}):
         _validate_assignment_values(assessment_type, class_id, module_id, topic_id, db, current_user)
+    if "week" in update_data:
+        _validate_week(update_data.get("week"))
 
     for key, value in update_data.items():
         if key in {"shuffle_questions", "show_answers_after_submission"} and isinstance(value, bool):
@@ -122,6 +127,14 @@ def _validate_module_topic(module_id: int | None, topic_id: int | None, db: Sess
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Topic not found")
         if module_id is not None and topic.module_id != module_id:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Topic does not belong to the selected module")
+
+
+def _validate_week(week: str | None):
+    if week is not None and week not in ALLOWED_LEARNING_WEEKS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Week must be one of: {', '.join(ALLOWED_LEARNING_WEEKS)}",
+        )
 
 
 def _validate_assessment_assignment(assessment: TeacherAssessmentCreate, db: Session, current_user: Accounts):
