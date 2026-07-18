@@ -16,6 +16,7 @@ from routes.student_module_route import activities_router as student_activities
 from routes.student_module_route import deadlines_router as student_deadlines
 from routes.student_module_route import router as student_modules
 from routes.handsign_route import router as handsign_router
+from routes.admin_create_section_route import router as section_create
 from core.handsign_config import get_handsign_settings
 from services.handsign.prediction_service import PredictionService
 from routes.otp_route import router as otp_router
@@ -103,6 +104,7 @@ app.include_router(student_deadlines)
 app.include_router(handsign_router)
 app.include_router(otp_router)
 app.include_router(admin_approval)
+app.include_router(section_create)
 
 
 @app.on_event("startup")
