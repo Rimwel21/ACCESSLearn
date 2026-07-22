@@ -167,56 +167,38 @@ def get_teacher_dashboard_summary(request: Request, class_id: int | None, db: Se
 
 def list_recent_activities(request: Request, limit: int, db: Session, current_user: Accounts):
     _ensure_teacher(current_user)
-    classes = db.query(TeacherClass).filter(TeacherClass.teacher_id == current_user.id).all()
-    class_ids = [teacher_class.id for teacher_class in classes]
-    if not class_ids:
-        return []
-
-    topic_rows = (
-        db.query(StudentTopicProgress, StudentProfile, TeacherModule, LearningTopic)
-        .join(LearningTopic, LearningTopic.id == StudentTopicProgress.topic_id)
-        .join(TeacherModule, TeacherModule.id == StudentTopicProgress.module_id)
-        .join(StudentProfile, StudentProfile.account_id == StudentTopicProgress.student_id)
-        .filter(
-            TeacherModule.teacher_id == current_user.id,
-            TeacherModule.class_id.in_(class_ids),
-            StudentTopicProgress.status == "completed",
-            StudentTopicProgress.completed_at.isnot(None),
-        )
+    module_rows = (
+        db.query(TeacherModule)
+        .filter(TeacherModule.teacher_id == current_user.id)
+        .order_by(TeacherModule.created_at.desc())
+        .limit(limit)
         .all()
     )
-    quiz_rows = (
-        db.query(StudentQuizProgress, StudentProfile, TeacherAssessment)
-        .join(TeacherAssessment, TeacherAssessment.id == StudentQuizProgress.assessment_id)
-        .join(StudentProfile, StudentProfile.account_id == StudentQuizProgress.student_id)
-        .outerjoin(TeacherModule, TeacherModule.id == TeacherAssessment.module_id)
+    assessment_rows = (
+        db.query(TeacherAssessment)
         .filter(
             TeacherAssessment.teacher_id == current_user.id,
-            StudentQuizProgress.status == "completed",
-            StudentQuizProgress.completed_at.isnot(None),
-            or_(
-                TeacherAssessment.class_id.in_(class_ids),
-                TeacherModule.class_id.in_(class_ids),
-            ),
+            TeacherAssessment.assessment_type.in_(["quiz", "activity"]),
         )
+        .order_by(TeacherAssessment.created_at.desc())
+        .limit(limit)
         .all()
     )
 
     activities = []
-    for progress, student, module, topic in topic_rows:
+    for module in module_rows:
         activities.append({
-            "id": f"topic-{progress.id}",
-            "text": f"{student.name} completed {topic.title} in {module.title}",
-            "occurred_at": progress.completed_at,
+            "id": f"material-{module.id}",
+            "text": f"Teacher uploaded a Learning Material: {module.title}",
+            "occurred_at": module.created_at,
             "activity_type": "material",
         })
-    for progress, student, assessment in quiz_rows:
-        label = "quiz" if assessment.assessment_type == "quiz" else "activity"
-        score = f" ({progress.score}/{progress.total})" if progress.total else ""
+    for assessment in assessment_rows:
+        label = "Quiz" if assessment.assessment_type == "quiz" else "Activity"
         activities.append({
-            "id": f"{assessment.assessment_type}-{progress.id}",
-            "text": f"{student.name} completed {label} {assessment.title}{score}",
-            "occurred_at": progress.completed_at,
+            "id": f"{assessment.assessment_type}-{assessment.id}",
+            "text": f"Teacher uploaded a {label}: {assessment.title}",
+            "occurred_at": assessment.created_at,
             "activity_type": assessment.assessment_type,
         })
 
