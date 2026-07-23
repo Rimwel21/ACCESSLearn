@@ -68,8 +68,6 @@
     <!-- Main Content -->
     <main class="flex-1 flex flex-col relative grid-bg h-full lg:overflow-y-auto overflow-x-hidden">
       
-
-
       <!-- Content Area -->
       <div class="p-6 lg:px-8 lg:pb-12 w-full max-w-[1300px] mx-auto space-y-6 flex-1 flex flex-col justify-center relative">
         
