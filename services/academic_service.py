@@ -3,9 +3,22 @@ from sqlalchemy.orm import Session
 
 from models.grade_levels import GradeLevels
 from models.HI_sections import HI_SECTIONS
+from utils.enum import SectionStatusEnum
 
 
 def list_grade_levels(db: Session):
+    grade_levels = db.query(GradeLevels).order_by(GradeLevels.id.asc()).all()
+
+    if grade_levels:
+        return grade_levels
+
+    default_grade_levels = [
+        GradeLevels(name=f"Grade {level}", status=SectionStatusEnum.active)
+        for level in range(1, 7)
+    ]
+    db.add_all(default_grade_levels)
+    db.commit()
+
     return db.query(GradeLevels).order_by(GradeLevels.id.asc()).all()
 
 

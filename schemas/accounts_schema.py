@@ -30,18 +30,20 @@ class AccountRegister(BaseModel):
 
     @field_validator("username")
     @classmethod
-    def validate_username(cls, value:str):
+    def validate_username(cls, value: str | None):
         if value is None:
             return value
-        
-        if not value[0].isupper():
-            raise ValueError("Invalid format. Use one uppercase at the beginning.")
+
+        if not value.replace("-", "").isalnum():
+            raise ValueError("Invalid format. Use only letters, numbers, and hyphens.")
+
         return value
 
 class AccountLogin(BaseModel):
     username: str | None = Field(None, min_length=5, max_length=50)
     email: EmailStr | None = Field(None, min_length=5, max_length=50)
     password: str = Field(min_length=8, max_length=30)
+    role: RoleEnum | None = None
 
 class TokenResponse(BaseModel):
     access_token: str

@@ -16,6 +16,8 @@ def user_registration(request: Request, user: AccountRegister, db: Session):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username is required for student accounts")
         
         existing = db.query(Accounts).filter(Accounts.username == user.username).first()
+        if not existing and user.email:
+            existing = db.query(Accounts).filter(Accounts.email == user.email).first()
         
     elif user.role == RoleEnum.teacher:
         if not user.email:
@@ -39,7 +41,7 @@ def user_registration(request: Request, user: AccountRegister, db: Session):
     
     new_account = Accounts(
         username=user.username if user.role == RoleEnum.student else None,
-        email=user.email if user.role == RoleEnum.teacher else None,
+        email=user.email,
         hashed_password=hash_password(user.password),
         role=user.role,
         verification_status=VerificationStatus.pending if user.role == RoleEnum.teacher else VerificationStatus.verified,
@@ -65,15 +67,32 @@ def user_login(request: Request, user: AccountLogin, response: Response, db: Ses
             detail="Use only username or email"
         )
 
-    if user.username:
-        db_account = db.query(Accounts).filter(Accounts.username == user.username).first()
+    if user.email:
+        query = db.query(Accounts).filter(Accounts.email == user.email)
+        if user.role:
+            query = query.filter(Accounts.role == user.role)
+        db_account = query.first()
+
+        if not db_account and user.role:
+            other_account = db.query(Accounts).filter(Accounts.email == user.email).first()
+            if other_account:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"This email belongs to a {other_account.role.value} account. Please use the {other_account.role.value} login.",
+                )
     else:
-        db_account = db.query(Accounts).filter(Accounts.email == user.email).first()
+        query = db.query(Accounts).filter(Accounts.username == user.username)
+        if user.role:
+            query = query.filter(Accounts.role == user.role)
+        db_account = query.first()
 
     if not db_account:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
     
     if db_account.verification_status == VerificationStatus.pending:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Wait for admin approval")
+
+    if db_account.role == RoleEnum.teacher and db_account.account_status == AccountStatusEnum.pending_activation:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Wait for admin approval")
     
     if db_account.verification_status == VerificationStatus.blocked:

@@ -167,56 +167,38 @@ def get_teacher_dashboard_summary(request: Request, class_id: int | None, db: Se
 
 def list_recent_activities(request: Request, limit: int, db: Session, current_user: Accounts):
     _ensure_teacher(current_user)
-    classes = db.query(TeacherClass).filter(TeacherClass.teacher_id == current_user.id).all()
-    class_ids = [teacher_class.id for teacher_class in classes]
-    if not class_ids:
-        return []
-
-    topic_rows = (
-        db.query(StudentTopicProgress, StudentProfile, TeacherModule, LearningTopic)
-        .join(LearningTopic, LearningTopic.id == StudentTopicProgress.topic_id)
-        .join(TeacherModule, TeacherModule.id == StudentTopicProgress.module_id)
-        .join(StudentProfile, StudentProfile.account_id == StudentTopicProgress.student_id)
-        .filter(
-            TeacherModule.teacher_id == current_user.id,
-            TeacherModule.class_id.in_(class_ids),
-            StudentTopicProgress.status == "completed",
-            StudentTopicProgress.completed_at.isnot(None),
-        )
+    module_rows = (
+        db.query(TeacherModule)
+        .filter(TeacherModule.teacher_id == current_user.id)
+        .order_by(TeacherModule.created_at.desc())
+        .limit(limit)
         .all()
     )
-    quiz_rows = (
-        db.query(StudentQuizProgress, StudentProfile, TeacherAssessment)
-        .join(TeacherAssessment, TeacherAssessment.id == StudentQuizProgress.assessment_id)
-        .join(StudentProfile, StudentProfile.account_id == StudentQuizProgress.student_id)
-        .outerjoin(TeacherModule, TeacherModule.id == TeacherAssessment.module_id)
+    assessment_rows = (
+        db.query(TeacherAssessment)
         .filter(
             TeacherAssessment.teacher_id == current_user.id,
-            StudentQuizProgress.status == "completed",
-            StudentQuizProgress.completed_at.isnot(None),
-            or_(
-                TeacherAssessment.class_id.in_(class_ids),
-                TeacherModule.class_id.in_(class_ids),
-            ),
+            TeacherAssessment.assessment_type.in_(["quiz", "activity"]),
         )
+        .order_by(TeacherAssessment.created_at.desc())
+        .limit(limit)
         .all()
     )
 
     activities = []
-    for progress, student, module, topic in topic_rows:
+    for module in module_rows:
         activities.append({
-            "id": f"topic-{progress.id}",
-            "text": f"{student.name} completed {topic.title} in {module.title}",
-            "occurred_at": progress.completed_at,
+            "id": f"material-{module.id}",
+            "text": f"Teacher uploaded a Learning Material: {module.title}",
+            "occurred_at": module.created_at,
             "activity_type": "material",
         })
-    for progress, student, assessment in quiz_rows:
-        label = "quiz" if assessment.assessment_type == "quiz" else "activity"
-        score = f" ({progress.score}/{progress.total})" if progress.total else ""
+    for assessment in assessment_rows:
+        label = "Quiz" if assessment.assessment_type == "quiz" else "Activity"
         activities.append({
-            "id": f"{assessment.assessment_type}-{progress.id}",
-            "text": f"{student.name} completed {label} {assessment.title}{score}",
-            "occurred_at": progress.completed_at,
+            "id": f"{assessment.assessment_type}-{assessment.id}",
+            "text": f"Teacher uploaded a {label}: {assessment.title}",
+            "occurred_at": assessment.created_at,
             "activity_type": assessment.assessment_type,
         })
 
@@ -307,6 +289,11 @@ def _dashboard_progress_for_student(student: StudentProfile, classes: list[Teach
     if not matching_class_ids:
         total_items = 0
         completed_items = 0
+        topic_ids = []
+        activity_ids = []
+        completed_topic_ids = set()
+        in_progress_topic_ids = set()
+        completed_activity_ids = set()
         last_activity = None
         quiz_activity = None
     else:
@@ -357,6 +344,7 @@ def _dashboard_progress_for_student(student: StudentProfile, classes: list[Teach
         ).all() if activity_ids else []
 
         completed_topic_ids = {item.topic_id for item in topic_progress if item.status == "completed"}
+        in_progress_topic_ids = {item.topic_id for item in topic_progress if item.status in {"started", "in_progress"}}
         completed_quiz_ids = {item.assessment_id for item in quiz_progress if item.status == "completed"}
         completed_activity_ids = {item.assessment_id for item in activity_progress if item.status == "completed"}
         total_items = len(topic_ids) + len(quiz_ids) + len(activity_ids)
@@ -370,14 +358,20 @@ def _dashboard_progress_for_student(student: StudentProfile, classes: list[Teach
         )
         quiz_activity = _format_quiz_activity(latest_quiz_progress, db) if latest_quiz_progress else None
 
-    percent = round((completed_items / total_items) * 100) if total_items else 0
-    status_value = "Complete" if total_items and completed_items == total_items else "Needs Help" if percent < 50 else "In Progress"
+    status_percent = round((completed_items / total_items) * 100) if total_items else 0
+    learning_material_percent = round((len(completed_topic_ids) / len(topic_ids)) * 100) if topic_ids else 0
+    activity_percent = round((len(completed_activity_ids) / len(activity_ids)) * 100) if activity_ids else 0
+    status_value = "Complete" if total_items and completed_items == total_items else "Needs Help" if status_percent < 50 else "In Progress"
     return {
         "student_id": student.account_id,
         "student_name": student.name,
-        "overall_percent": percent,
-        "activities_completed": completed_items,
-        "activities_total": total_items,
+        "overall_percent": learning_material_percent,
+        "activities_completed": len(completed_activity_ids),
+        "activities_total": len(activity_ids),
+        "activity_percent": activity_percent,
+        "learning_materials_completed": len(completed_topic_ids),
+        "learning_materials_in_progress": len(in_progress_topic_ids),
+        "learning_materials_total": len(topic_ids),
         "status": status_value,
         "last_activity": last_activity,
         "quiz_activity": quiz_activity,
