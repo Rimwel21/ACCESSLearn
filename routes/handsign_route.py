@@ -3,7 +3,14 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from models.accounts import Accounts
-from schemas.handsign.prediction import CameraDetectionResponse, CameraFrameRequest, FrameRequest, PredictionResponse, ResetCameraSessionRequest
+from schemas.handsign.prediction import (
+    BackspaceCameraSessionResponse,
+    CameraDetectionResponse,
+    CameraFrameRequest,
+    FrameRequest,
+    PredictionResponse,
+    ResetCameraSessionRequest,
+)
 from services.handsign.response_mapper import to_prediction_response
 from utils.dependencies import get_current_user
 from utils.handsign.image import decode_base64_image
@@ -56,6 +63,9 @@ def detect_camera_frame(
             confirmed_text=confirmed_text,
             confirmed_prediction=confirmed_prediction,
             threshold_met=threshold_met,
+            confirmation_progress=result.confirmation_progress,
+            confirmation_status=result.confirmation_status,
+            dynamic_accepted=result.dynamic_accepted,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -73,3 +83,14 @@ def reset_camera_session(
     request.app.state.handsign_prediction_service.reset_session(payload.session_id)
     logger.info("Reset hand sign camera session for account %s", current_user.id)
     return {"status": "reset"}
+
+
+@router.post("/backspace", response_model=BackspaceCameraSessionResponse)
+def backspace_camera_session(
+    request: Request,
+    payload: ResetCameraSessionRequest,
+    current_user: Accounts = Depends(get_current_user),
+) -> BackspaceCameraSessionResponse:
+    confirmed_text, removed_letter = request.app.state.handsign_prediction_service.backspace_session(payload.session_id)
+    logger.info("Backspaced hand sign camera session for account %s", current_user.id)
+    return BackspaceCameraSessionResponse(confirmed_text=confirmed_text, removed_letter=removed_letter)
