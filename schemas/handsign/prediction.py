@@ -13,6 +13,11 @@ class ResetCameraSessionRequest(BaseModel):
     session_id: str = Field(..., min_length=1, max_length=100)
 
 
+class BackspaceCameraSessionResponse(BaseModel):
+    confirmed_text: str
+    removed_letter: str | None
+
+
 class BoundingBoxResponse(BaseModel):
     x_min: int
     y_min: int
@@ -33,9 +38,14 @@ class PredictionResponse(BaseModel):
     top_predictions: list[TopPredictionResponse]
     frame_width: int
     frame_height: int
+    prediction_source: str = "direct"
+    calibration_status: str | None = None
 
 
 class CameraDetectionResponse(PredictionResponse):
     confirmed_text: str
     confirmed_prediction: str | None
     threshold_met: bool
+    confirmation_progress: float = 0.0
+    confirmation_status: str = "No hand"
+    dynamic_accepted: bool = False

@@ -2,6 +2,8 @@ from fastapi import HTTPException, Request, status
 from sqlalchemy.orm import Session
 from models.accounts import Accounts
 from models.learning_topic import LearningTopic
+from models.student_profile import StudentProfile
+from models.student_quiz_progress import StudentQuizProgress
 from models.teacher_assessment import TeacherAssessment
 from models.teacher_class import TeacherClass
 from models.teacher_module import TeacherModule
@@ -20,7 +22,7 @@ def list_teacher_assessments(request: Request, assessment_type: str, db: Session
     if assessment_type not in {"quiz", "activity"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Assessment type must be quiz or activity")
 
-    return (
+    assessments = (
         db.query(TeacherAssessment)
         .filter(
             TeacherAssessment.teacher_id == current_user.id,
@@ -29,6 +31,9 @@ def list_teacher_assessments(request: Request, assessment_type: str, db: Session
         .order_by(TeacherAssessment.created_at.desc())
         .all()
     )
+    if assessment_type == "activity":
+        return [_assessment_with_submissions(assessment, db) for assessment in assessments]
+    return assessments
 
 
 def create_teacher_assessment(request: Request, assessment: TeacherAssessmentCreate, db: Session, current_user: Accounts):
@@ -170,3 +175,56 @@ def _validate_assignment_values(
         return
 
     _validate_module_topic(module_id, topic_id, db, current_user)
+
+
+def _assessment_with_submissions(assessment: TeacherAssessment, db: Session):
+    submissions = (
+        db.query(StudentQuizProgress, StudentProfile)
+        .join(StudentProfile, StudentProfile.account_id == StudentQuizProgress.student_id)
+        .filter(
+            StudentQuizProgress.assessment_id == assessment.id,
+            StudentQuizProgress.status == "completed",
+        )
+        .order_by(StudentQuizProgress.completed_at.desc())
+        .all()
+    )
+
+    return {
+        "id": assessment.id,
+        "teacher_id": assessment.teacher_id,
+        "class_id": assessment.class_id,
+        "module_id": assessment.module_id,
+        "topic_id": assessment.topic_id,
+        "assessment_type": assessment.assessment_type,
+        "title": assessment.title,
+        "description": assessment.description,
+        "category": assessment.category,
+        "week": assessment.week,
+        "time_limit": assessment.time_limit,
+        "attempts_allowed": assessment.attempts_allowed,
+        "shuffle_questions": _string_to_bool(assessment.shuffle_questions),
+        "show_answers_after_submission": _string_to_bool(assessment.show_answers_after_submission),
+        "questions": assessment.questions or [],
+        "due_at": assessment.due_at,
+        "submissions_count": len(submissions),
+        "submissions": [
+            {
+                "id": progress.id,
+                "student_id": progress.student_id,
+                "student_name": student.name,
+                "score": progress.score,
+                "total": progress.total,
+                "answers": progress.answers or {},
+                "completed_at": progress.completed_at,
+            }
+            for progress, student in submissions
+        ],
+        "created_at": assessment.created_at,
+        "updated_at": assessment.updated_at,
+    }
+
+
+def _string_to_bool(value):
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}

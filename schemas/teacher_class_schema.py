@@ -78,6 +78,10 @@ class DashboardStudentProgressOut(BaseModel):
     overall_percent: int
     activities_completed: int
     activities_total: int
+    activity_percent: int = 0
+    learning_materials_completed: int = 0
+    learning_materials_in_progress: int = 0
+    learning_materials_total: int = 0
     status: str
     last_activity: datetime | None = None
     quiz_activity: str | None = None

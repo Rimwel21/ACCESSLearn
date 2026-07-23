@@ -289,6 +289,11 @@ def _dashboard_progress_for_student(student: StudentProfile, classes: list[Teach
     if not matching_class_ids:
         total_items = 0
         completed_items = 0
+        topic_ids = []
+        activity_ids = []
+        completed_topic_ids = set()
+        in_progress_topic_ids = set()
+        completed_activity_ids = set()
         last_activity = None
         quiz_activity = None
     else:
@@ -339,6 +344,7 @@ def _dashboard_progress_for_student(student: StudentProfile, classes: list[Teach
         ).all() if activity_ids else []
 
         completed_topic_ids = {item.topic_id for item in topic_progress if item.status == "completed"}
+        in_progress_topic_ids = {item.topic_id for item in topic_progress if item.status in {"started", "in_progress"}}
         completed_quiz_ids = {item.assessment_id for item in quiz_progress if item.status == "completed"}
         completed_activity_ids = {item.assessment_id for item in activity_progress if item.status == "completed"}
         total_items = len(topic_ids) + len(quiz_ids) + len(activity_ids)
@@ -352,14 +358,20 @@ def _dashboard_progress_for_student(student: StudentProfile, classes: list[Teach
         )
         quiz_activity = _format_quiz_activity(latest_quiz_progress, db) if latest_quiz_progress else None
 
-    percent = round((completed_items / total_items) * 100) if total_items else 0
-    status_value = "Complete" if total_items and completed_items == total_items else "Needs Help" if percent < 50 else "In Progress"
+    status_percent = round((completed_items / total_items) * 100) if total_items else 0
+    learning_material_percent = round((len(completed_topic_ids) / len(topic_ids)) * 100) if topic_ids else 0
+    activity_percent = round((len(completed_activity_ids) / len(activity_ids)) * 100) if activity_ids else 0
+    status_value = "Complete" if total_items and completed_items == total_items else "Needs Help" if status_percent < 50 else "In Progress"
     return {
         "student_id": student.account_id,
         "student_name": student.name,
-        "overall_percent": percent,
-        "activities_completed": completed_items,
-        "activities_total": total_items,
+        "overall_percent": learning_material_percent,
+        "activities_completed": len(completed_activity_ids),
+        "activities_total": len(activity_ids),
+        "activity_percent": activity_percent,
+        "learning_materials_completed": len(completed_topic_ids),
+        "learning_materials_in_progress": len(in_progress_topic_ids),
+        "learning_materials_total": len(topic_ids),
         "status": status_value,
         "last_activity": last_activity,
         "quiz_activity": quiz_activity,

@@ -34,16 +34,23 @@
   "validation_size": 0.2,
   "random_state": 42,
   "min_detection_confidence": 0.3,
+  "confidence_threshold": 0.75,
   "excluded_labels": [
     "nothing"
   ],
   "affected_labels": [
     "G",
+    "J",
     "M",
     "N",
     "O",
     "P",
-    "T"
+    "Q",
+    "R",
+    "S",
+    "T",
+    "X",
+    "Z"
   ],
   "train_counts": {
     "A": 5648,

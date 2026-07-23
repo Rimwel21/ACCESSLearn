@@ -144,7 +144,7 @@ def list_student_activities(request: Request, db: Session, current_user: Account
         .order_by(TeacherAssessment.created_at.asc())
         .all()
     )
-    return [_assessment_to_dict(activity) for activity in activities]
+    return [_assessment_to_dict(activity, db, current_user) for activity in activities]
 
 
 def get_student_activity(request: Request, activity_id: int, db: Session, current_user: Accounts):
@@ -167,7 +167,7 @@ def get_student_activity(request: Request, activity_id: int, db: Session, curren
     )
     if not activity:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Activity not found")
-    return _assessment_to_dict(activity)
+    return _assessment_to_dict(activity, db, current_user)
 
 
 def get_student_module(request: Request, module_id: int, db: Session, current_user: Accounts):
@@ -373,7 +373,14 @@ def submit_assessment_progress(
 def submit_class_activity_progress(request: Request, activity_id: int, answers: dict, db: Session, current_user: Accounts):
     _ensure_student(current_user)
     activity = get_student_activity(request, activity_id, db, current_user)
-    questions = activity.questions or []
+    progress = db.query(StudentQuizProgress).filter(
+        StudentQuizProgress.student_id == current_user.id,
+        StudentQuizProgress.assessment_id == activity_id,
+    ).first()
+    if progress and progress.status == "completed":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Activity already submitted")
+
+    questions = activity.get("questions") or []
     total = len(questions)
     score = 0
     for index, question in enumerate(questions):
@@ -382,10 +389,6 @@ def submit_class_activity_progress(request: Request, activity_id: int, answers: 
         if expected and expected == actual:
             score += 1
 
-    progress = db.query(StudentQuizProgress).filter(
-        StudentQuizProgress.student_id == current_user.id,
-        StudentQuizProgress.assessment_id == activity_id,
-    ).first()
     if not progress:
         progress = StudentQuizProgress(
             student_id=current_user.id,
@@ -479,7 +482,14 @@ def _normalize_answer(value: str):
     return " ".join(value.strip().lower().split())
 
 
-def _assessment_to_dict(assessment: TeacherAssessment):
+def _assessment_to_dict(assessment: TeacherAssessment, db: Session | None = None, current_user: Accounts | None = None):
+    progress = None
+    if db is not None and current_user is not None:
+        progress = db.query(StudentQuizProgress).filter(
+            StudentQuizProgress.student_id == current_user.id,
+            StudentQuizProgress.assessment_id == assessment.id,
+        ).first()
+
     return {
         "id": assessment.id,
         "teacher_id": assessment.teacher_id,
@@ -497,6 +507,10 @@ def _assessment_to_dict(assessment: TeacherAssessment):
         "show_answers_after_submission": _string_to_bool(assessment.show_answers_after_submission),
         "questions": assessment.questions or [],
         "due_at": assessment.due_at,
+        "student_status": progress.status if progress else None,
+        "student_score": progress.score if progress else None,
+        "student_total": progress.total if progress else None,
+        "student_completed_at": progress.completed_at if progress else None,
         "created_at": assessment.created_at,
         "updated_at": assessment.updated_at,
     }

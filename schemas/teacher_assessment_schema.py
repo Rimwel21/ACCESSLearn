@@ -58,10 +58,26 @@ class TeacherAssessmentUpdate(BaseModel):
         return value
 
 
+class ActivitySubmissionOut(BaseModel):
+    id: int
+    student_id: int
+    student_name: str
+    score: int | None = None
+    total: int | None = None
+    answers: dict = Field(default_factory=dict)
+    completed_at: datetime | None = None
+
+
 class TeacherAssessmentOut(TeacherAssessmentBase):
     id: int
     teacher_id: int
     assessment_type: str
+    student_status: str | None = None
+    student_score: int | None = None
+    student_total: int | None = None
+    student_completed_at: datetime | None = None
+    submissions_count: int = 0
+    submissions: list[ActivitySubmissionOut] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 
