@@ -1,7 +1,7 @@
 """omni admin foundation
 
 Revision ID: 7dac31640e29
-Revises: 6f702856c187
+Revises: 0a3716c5e1fc
 Create Date: 2026-07-04 18:48:09.339275
 
 """
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = '7dac31640e29'
-down_revision: Union[str, Sequence[str], None] = '6f702856c187'
+down_revision: Union[str, Sequence[str], None] = '0a3716c5e1fc'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

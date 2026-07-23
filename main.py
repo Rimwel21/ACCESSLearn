@@ -19,6 +19,7 @@ from routes.handsign_route import router as handsign_router
 from routes.admin_create_section_route import router as section_create
 from core.handsign_config import get_handsign_settings
 from services.handsign.prediction_service import PredictionService
+from services.schema_maintenance import ensure_academic_tables
 from routes.otp_route import router as otp_router
 from routes.admin_approval_route import router as admin_approval
 from limiter import limiter
@@ -106,6 +107,10 @@ app.include_router(otp_router)
 app.include_router(admin_approval)
 app.include_router(section_create)
 
+
+@app.on_event("startup")
+def ensure_database_schema():
+    ensure_academic_tables()
 
 @app.on_event("startup")
 def load_handsign_model():
