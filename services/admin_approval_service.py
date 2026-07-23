@@ -1,5 +1,4 @@
 from fastapi import  HTTPException, status
-from sqlalchemy import or_
 from sqlalchemy.orm import Session
 from utils.enum import AccountStatusEnum, RoleEnum, VerificationStatus
 from models.accounts import Accounts
@@ -25,7 +24,7 @@ def admin_approval(teacher_id: int, current_user: Accounts, db: Session):
 
     if (
         teacher.verification_status != VerificationStatus.pending
-        and teacher.account_status != AccountStatusEnum.pending_activation
+        or teacher.account_status != AccountStatusEnum.pending_activation
     ):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This teacher account has already been processed.")
 
@@ -65,10 +64,8 @@ def teachers_pending_account(current_user: Accounts, db: Session):
     teachers = (
         db.query(Accounts).filter(
             Accounts.role == RoleEnum.teacher,
-            or_(
-                Accounts.verification_status == VerificationStatus.pending,
-                Accounts.account_status == AccountStatusEnum.pending_activation,
-            ),
+            Accounts.verification_status == VerificationStatus.pending,
+            Accounts.account_status == AccountStatusEnum.pending_activation,
         )
         .order_by(Accounts.created_at.desc())
         .all()

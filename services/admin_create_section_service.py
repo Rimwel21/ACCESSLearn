@@ -1,4 +1,5 @@
 from fastapi import HTTPException, status, Depends, Request
+from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 from models.accounts import Accounts
 from models.HI_sections import HI_SECTIONS
@@ -15,7 +16,10 @@ def create_section(request: Request, section: SectionCreate, db: Session, curren
 
     get_grade_level_or_404(section.grade_level_id, db)
 
-    exiting_section = db.query(HI_SECTIONS).filter(HI_SECTIONS.name == section.name, HI_SECTIONS.grade_level_id == section.grade_level_id).first()
+    exiting_section = db.query(HI_SECTIONS).filter(
+        func.lower(HI_SECTIONS.name) == section.name.lower(),
+        HI_SECTIONS.grade_level_id == section.grade_level_id,
+    ).first()
 
     if exiting_section:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This section already exists for the selected grade level.")

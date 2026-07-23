@@ -1,4 +1,11 @@
-from pydantic import BaseModel,Field ,model_validator, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+
+def normalize_section_name(value: str) -> str:
+    value = " ".join(value.strip().split())
+    if not value:
+        return value
+    return value[0].upper() + value[1:]
 
 class SectionBase(BaseModel):
     name: str 
@@ -12,19 +19,16 @@ class SectionBase(BaseModel):
 
         value = data.get("name")
         if isinstance(value, str):
-            data["name"] = value.strip()
+            data["name"] = normalize_section_name(value)
 
         return data
     
     @field_validator("name")
     @classmethod
     def validate_section_name(cls, value:str):
-        if value is None:
+        if value is None or not value.strip():
             raise ValueError("section name cannot be empty")
-        
-        if not value[0].isupper():
-            raise ValueError("section name must start with uppercase letter.")
-        
+
         return value
 
 class SectionCreate(SectionBase):

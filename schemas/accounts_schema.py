@@ -1,6 +1,6 @@
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 from datetime import datetime
-from utils.enum import RoleEnum
+from utils.enum import RoleEnum, VerificationStatus
 
 
 class AccountRegister(BaseModel):
@@ -57,6 +57,17 @@ class AccountResponse(BaseModel):
     role: RoleEnum
     created_at: datetime
     updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class PendingTeacherResponse(BaseModel):
+    id: int
+    email: EmailStr | None
+    role: RoleEnum
+    verification_status: VerificationStatus
+    created_at: datetime
 
     class Config:
         from_attributes = True
