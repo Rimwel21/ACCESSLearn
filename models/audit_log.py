@@ -31,9 +31,9 @@ class AuditLog(Base):
     old_value = Column(Text, nullable=True)
     new_value = Column(Text, nullable=True)
 
-    # Context — old/new section and teacher for transfer events
-    old_section_id  = Column(Integer, ForeignKey("sections.id", ondelete="SET NULL"), nullable=True)
-    new_section_id  = Column(Integer, ForeignKey("sections.id", ondelete="SET NULL"), nullable=True)
+    # Context for section and teacher transfer events
+    old_section_id  = Column(Integer, ForeignKey("hi_sections.id", ondelete="SET NULL"), nullable=True)
+    new_section_id  = Column(Integer, ForeignKey("hi_sections.id", ondelete="SET NULL"), nullable=True)
     old_teacher_id  = Column(Integer, ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True)
     new_teacher_id  = Column(Integer, ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True)
     reason          = Column(Text, nullable=True)

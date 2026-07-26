@@ -11,6 +11,8 @@ class StudentProfile(Base):
 
     name = Column(String, nullable=False)
 
+    student_lrn = Column(String(12), unique=True, nullable=True, index=True)
+
     age = Column(Integer, nullable=True)
 
     sex = Column(Enum(UserSex), nullable=True)
@@ -40,6 +42,10 @@ class StudentProfile(Base):
     guardians_contact_no = Column(String(20), nullable=True)
 
     address = Column(String, nullable=True)
+
+    accessibility_profile = Column(String, nullable=True)
+
+    learning_preferences = Column(String, nullable=True)
 
     created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
 

@@ -44,6 +44,13 @@ class Accounts(Base):
     topic_progress = relationship("StudentTopicProgress", passive_deletes=True)
     quiz_progress = relationship("StudentQuizProgress", passive_deletes=True)
 
+    audit_logs = relationship(
+        "AuditLog",
+        back_populates="actor",
+        foreign_keys="AuditLog.user_id",
+        passive_deletes=True,
+    )
+
     created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
 
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)

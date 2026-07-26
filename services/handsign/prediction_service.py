@@ -1,5 +1,6 @@
 ﻿import json
 import logging
+import os
 import pickle
 import threading
 import time
@@ -567,6 +568,9 @@ class PredictionService:
     def __init__(self, settings: HandSignSettings) -> None:
         self.settings = settings
         self.model = self._load_model(settings.resolved_model_path(), settings.resolved_metadata_path())
+        matplotlib_cache = Path("static/matplotlib_cache").resolve()
+        matplotlib_cache.mkdir(parents=True, exist_ok=True)
+        os.environ.setdefault("MPLCONFIGDIR", str(matplotlib_cache))
         import mediapipe as mp
 
         self.mp_hands = mp.solutions.hands

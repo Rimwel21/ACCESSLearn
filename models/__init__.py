@@ -1,4 +1,5 @@
 from models.accounts import Accounts
+from models.audit_log import AuditLog
 from models.email_otp import EmailOTP
 from models.file_upload import FileUpload
 from models.grade_levels import GradeLevels

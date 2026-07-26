@@ -1,11 +1,12 @@
 from fastapi import Request, HTTPException, status, Response
 from sqlalchemy.orm import Session
-from utils.enum import RoleEnum, VerificationStatus, AccountStatusEnum
+from utils.enum import RoleEnum, VerificationStatus, AccountStatusEnum, StudentType
 from models.accounts import Accounts
 from schemas.accounts_schema import AccountRegister, AccountLogin
 from models.student_profile import StudentProfile
 from models.teacher_profile import TeacherProfile
 from auth.account_auth import hash_password, verify_password, create_access_token, create_refresh_token
+from services.academic_service import get_grade_level_or_404, get_section_for_grade_or_400
 
 from models.email_otp import EmailOTP
 from utils.utc_now import utc_now
@@ -14,10 +15,29 @@ def user_registration(request: Request, user: AccountRegister, db: Session):
     if user.role == RoleEnum.student:
         if not user.username:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username is required for student accounts")
+        if not user.email:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email is required for student accounts")
+        if not user.full_name:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Full name is required for student accounts")
+        if not user.student_lrn:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Student LRN is required")
+        if user.grade_level_id is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Grade level is required")
+        if user.section_id is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Section is required")
+        if not user.accessibility_profile:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Accessibility profile is required")
         
-        existing = db.query(Accounts).filter(Accounts.username == user.username).first()
-        if not existing and user.email:
-            existing = db.query(Accounts).filter(Accounts.email == user.email).first()
+        if db.query(Accounts).filter(Accounts.username == user.username).first():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username already exists")
+        if db.query(Accounts).filter(Accounts.email == user.email).first():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already exists")
+        if db.query(StudentProfile).filter(StudentProfile.student_lrn == user.student_lrn).first():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Student LRN already exists")
+
+        get_grade_level_or_404(user.grade_level_id, db)
+        get_section_for_grade_or_400(user.section_id, user.grade_level_id, db)
+        existing = None
         
     elif user.role == RoleEnum.teacher:
         if not user.email:
@@ -49,6 +69,22 @@ def user_registration(request: Request, user: AccountRegister, db: Session):
     )
 
     db.add(new_account)
+    db.flush()
+
+    if user.role == RoleEnum.student:
+        student_profile = StudentProfile(
+            name=user.full_name,
+            student_lrn=user.student_lrn,
+            grade_level_id=user.grade_level_id,
+            section_id=user.section_id,
+            account_id=new_account.id,
+            profile_image_id=None,
+            student_type=StudentType.HI if user.accessibility_profile == "Hearing Impaired Student" else StudentType.regular,
+            accessibility_profile=user.accessibility_profile,
+            learning_preferences=None
+        )
+        db.add(student_profile)
+
     db.commit()
     db.refresh(new_account)
 

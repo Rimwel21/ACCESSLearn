@@ -127,6 +127,7 @@ class SectionResponse(BaseModel):
 class StudentProfileOut(BaseModel):
     id: int
     name: str
+    student_lrn: str | None = None
     age: int | None = None
     sex: UserSex | None = None
     grade_level: GradeLevelResponse
@@ -137,6 +138,8 @@ class StudentProfileOut(BaseModel):
     guardians_name: str | None = None
     guardians_contact_no: str | None = None
     address: str | None = None
+    accessibility_profile: str | None = None
+    learning_preferences: str | None = None
     created_at: datetime
     updated_at: datetime
 
