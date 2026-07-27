@@ -21,12 +21,40 @@ def ensure_academic_tables() -> None:
     if not inspector.has_table(HI_SECTIONS.__tablename__):
         HI_SECTIONS.__table__.create(bind=engine, checkfirst=True)
 
+    from models.teacher_section_assignments import TeacherSectionAssignment
+    inspector = inspect(engine)
+    if not inspector.has_table(TeacherSectionAssignment.__tablename__):
+        TeacherSectionAssignment.__table__.create(bind=engine, checkfirst=True)
+
     _ensure_postgres_enum_values()
     _ensure_audit_log_schema()
     _ensure_teacher_grade_handles_schema()
     _ensure_teacher_assessments_schema()
     _ensure_student_profile_registration_schema()
+    _ensure_hi_sections_teacher_id()
     _seed_default_academic_options()
+
+
+def _ensure_hi_sections_teacher_id() -> None:
+    """Add teacher_id column to hi_sections if missing (admin-assigned teacher)."""
+    inspector = inspect(engine)
+    if not inspector.has_table("hi_sections"):
+        return
+
+    columns = {col["name"] for col in inspector.get_columns("hi_sections")}
+    if "teacher_id" in columns:
+        return
+
+    with engine.begin() as connection:
+        connection.execute(text(
+            "ALTER TABLE hi_sections "
+            "ADD COLUMN IF NOT EXISTS teacher_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL"
+        ))
+        connection.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_hi_sections_teacher_id ON hi_sections (teacher_id)"
+        ))
+
+
 
 
 def _ensure_postgres_enum_values() -> None:

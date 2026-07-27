@@ -272,6 +272,12 @@ def _validate_material_file(material_file: UploadFile, expected_content_type: st
             detail="The selected content type accepts PDF files only."
         )
 
+    if expected_content_type == "DOCX" and extension != ".docx":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The selected content type accepts DOCX files only."
+        )
+
     if extension not in ALLOWED_MATERIAL_EXTENSIONS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

@@ -170,3 +170,131 @@ def get_class_students_compat(
 ):
     """Alias for /teacher/sections/{id}/students — for frontend compatibility."""
     return get_section_students(class_id, db, teacher)
+
+
+# ─── Available Sections & Selection ─────────────────────────────────────────────
+
+@router.get("/sections/available", response_model=List[TeacherSectionOut])
+def get_available_sections(
+    db: Session = Depends(get_db),
+    teacher: Accounts = Depends(require_teacher)
+):
+    """Return all active sections created by the administrator."""
+    sections = db.query(Section).filter(
+        Section.status == "active"
+    ).all()
+
+    result = []
+    for sec in sections:
+        count = db.query(StudentProfile).join(Accounts).filter(
+            StudentProfile.section_id == sec.id,
+            Accounts.account_status.in_([AccountStatusEnum.active, AccountStatusEnum.pending_approval])
+        ).count()
+
+        result.append(TeacherSectionOut(
+            id=sec.id,
+            class_name=sec.name,
+            subject=sec.subject or "Science",
+            grade_level=sec.grade_level.name if sec.grade_level else "",
+            grade_level_id=sec.grade_level_id,
+            section=sec.name,
+            school_year=sec.school_year.name if sec.school_year else None,
+            student_count=count,
+            created_at=sec.created_at.isoformat(),
+            updated_at=sec.updated_at.isoformat()
+        ))
+    return result
+
+
+@router.post("/sections/{section_id}/select", response_model=TeacherSectionOut)
+def select_section(
+    section_id: int,
+    db: Session = Depends(get_db),
+    teacher: Accounts = Depends(require_teacher)
+):
+    """Select a section to manage."""
+    sec = db.query(Section).filter(Section.id == section_id).first()
+    if not sec:
+        raise HTTPException(status_code=404, detail="Section not found.")
+
+    # Assign this section to the teacher
+    sec.teacher_id = teacher.id
+    db.commit()
+    db.refresh(sec)
+
+    count = db.query(StudentProfile).join(Accounts).filter(
+        StudentProfile.section_id == sec.id,
+        Accounts.account_status.in_([AccountStatusEnum.active, AccountStatusEnum.pending_approval])
+    ).count()
+
+    from services.audit_service import write_log
+    from utils.enum import AuditActionEnum
+    write_log(
+        db,
+        module="ClassManagement",
+        action=AuditActionEnum.section_update,
+        actor_id=teacher.id,
+        actor_role=teacher.role,
+        affected_record=f"Section {sec.name}",
+        new_value={"teacher_id": teacher.id}
+    )
+
+    return TeacherSectionOut(
+        id=sec.id,
+        class_name=sec.name,
+        subject=sec.subject or "Science",
+        grade_level=sec.grade_level.name if sec.grade_level else "",
+        grade_level_id=sec.grade_level_id,
+        section=sec.name,
+        school_year=sec.school_year.name if sec.school_year else None,
+        student_count=count,
+        created_at=sec.created_at.isoformat(),
+        updated_at=sec.updated_at.isoformat()
+    )
+
+
+@router.post("/sections/{section_id}/unselect", response_model=TeacherSectionOut)
+def unselect_section(
+    section_id: int,
+    db: Session = Depends(get_db),
+    teacher: Accounts = Depends(require_teacher)
+):
+    """Unselect a section (unassign teacher)."""
+    sec = db.query(Section).filter(Section.id == section_id, Section.teacher_id == teacher.id).first()
+    if not sec:
+        raise HTTPException(status_code=404, detail="Section not found or not assigned to you.")
+
+    sec.teacher_id = None
+    db.commit()
+    db.refresh(sec)
+
+    count = db.query(StudentProfile).join(Accounts).filter(
+        StudentProfile.section_id == sec.id,
+        Accounts.account_status.in_([AccountStatusEnum.active, AccountStatusEnum.pending_approval])
+    ).count()
+
+    from services.audit_service import write_log
+    from utils.enum import AuditActionEnum
+    write_log(
+        db,
+        module="ClassManagement",
+        action=AuditActionEnum.section_update,
+        actor_id=teacher.id,
+        actor_role=teacher.role,
+        affected_record=f"Section {sec.name}",
+        old_value={"teacher_id": teacher.id},
+        new_value={"teacher_id": None}
+    )
+
+    return TeacherSectionOut(
+        id=sec.id,
+        class_name=sec.name,
+        subject=sec.subject or "Science",
+        grade_level=sec.grade_level.name if sec.grade_level else "",
+        grade_level_id=sec.grade_level_id,
+        section=sec.name,
+        school_year=sec.school_year.name if sec.school_year else None,
+        student_count=count,
+        created_at=sec.created_at.isoformat(),
+        updated_at=sec.updated_at.isoformat()
+    )

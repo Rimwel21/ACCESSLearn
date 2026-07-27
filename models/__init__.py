@@ -13,4 +13,5 @@ from models.teacher_class import TeacherClass
 from models.teacher_grade_handles import TeacherGradeHandles
 from models.teacher_module import TeacherModule
 from models.teacher_profile import TeacherProfile
+from models.teacher_section_assignments import TeacherSectionAssignment
 

@@ -14,6 +14,9 @@ class AccountRegister(BaseModel):
     grade_level_id: int | None = None
     section_id: int | None = None
     accessibility_profile: str | None = None
+    profile_image: str | None = None
+    guardians_name: str | None = Field(None, max_length=100)
+    guardians_contact_no: str | None = Field(None, max_length=20)
 
     @model_validator(mode="before")
     @classmethod
@@ -21,8 +24,9 @@ class AccountRegister(BaseModel):
         if not isinstance(data, dict):
             return data
 
-        for field in ["username", "email", "password", "full_name", "student_lrn", "accessibility_profile"]:
+        for field in ["username", "email", "password", "full_name", "student_lrn", "accessibility_profile", "profile_image", "guardians_name", "guardians_contact_no"]:
             value = data.get(field)
+
             if isinstance(value, str):
                 data[field] = value.strip()
 
@@ -36,12 +40,11 @@ class AccountRegister(BaseModel):
         if self.role == RoleEnum.student:
             if not self.username:
                 raise ValueError("Username is required for student accounts")
-            if not self.email:
-                raise ValueError("Email is required for student accounts")
             if not self.full_name:
                 raise ValueError("Full name is required for student accounts")
             if not self.student_lrn:
                 raise ValueError("Student LRN is required")
+
             if self.grade_level_id is None:
                 raise ValueError("Grade level is required")
             if self.section_id is None:

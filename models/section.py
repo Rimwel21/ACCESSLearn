@@ -19,9 +19,9 @@ class Section(Base):
         index=True,
     )
 
-    # Reference to central GradeLevel
+    # Legacy sections table; current section flows use HI_SECTIONS.
     grade_level_id = Column(Integer, ForeignKey("grade_levels.id", ondelete="CASCADE"), nullable=False, index=True)
-    grade_level    = relationship("GradeLevel", back_populates="sections")
+    grade_level    = relationship("GradeLevels")
 
     # Reference to central SchoolYear
     school_year_id = Column(Integer, ForeignKey("school_years.id", ondelete="SET NULL"), nullable=True, index=True)

@@ -6,7 +6,8 @@ class TeacherClassBase(BaseModel):
     class_name: str = Field(min_length=1, max_length=120)
     subject: str = Field(min_length=1, max_length=120)
     grade_level_id: int
-    section_id: int
+    section_id: int | None = None
+    section: str | None = Field(default=None, min_length=1, max_length=100)
     school_year: str | None = Field(default=None, max_length=30)
 
 
@@ -22,8 +23,9 @@ class TeacherClassCreate(TeacherClassBase):
 class TeacherClassUpdate(BaseModel):
     class_name: str | None = Field(default=None, min_length=1, max_length=120)
     subject: str | None = Field(default=None, min_length=1, max_length=120)
-    grade_level_id: int
-    section_id: int
+    grade_level_id: int | None = None
+    section_id: int | None = None
+    section: str | None = Field(default=None, min_length=1, max_length=100)
     school_year: str | None = Field(default=None, max_length=30)
 
 class GradeLevelOut(BaseModel):
@@ -64,6 +66,8 @@ class ClassStudentOut(BaseModel):
     name: str
     username: str | None = None
     email: str | None = None
+    guardians_name: str | None = None
+    guardians_contact_no: str | None = None
     grade_level: GradeLevelOut
     section: SectionOut
     created_at: datetime
