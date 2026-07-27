@@ -12,6 +12,8 @@ from services.student_module_service import (
     list_upcoming_deadlines,
     list_student_activities,
     list_student_modules,
+    save_quiz_answers,
+    start_quiz_progress,
     submit_assessment_progress,
     submit_class_activity_progress,
     submit_quiz_progress,
@@ -124,6 +126,44 @@ def submit_quiz_progress_route(
     current_user: Accounts = Depends(get_current_user),
 ):
     return submit_quiz_progress(
+        request=request,
+        module_id=module_id,
+        quiz_id=quiz_id,
+        answers=payload.answers,
+        db=db,
+        current_user=current_user,
+    )
+
+
+@router.post("/{module_id}/quizzes/{quiz_id}/start")
+@limiter.limit("20/minute")
+def start_quiz_progress_route(
+    request: Request,
+    module_id: int,
+    quiz_id: int,
+    db: Session = Depends(get_db),
+    current_user: Accounts = Depends(get_current_user),
+):
+    return start_quiz_progress(
+        request=request,
+        module_id=module_id,
+        quiz_id=quiz_id,
+        db=db,
+        current_user=current_user,
+    )
+
+
+@router.post("/{module_id}/quizzes/{quiz_id}/answers")
+@limiter.limit("60/minute")
+def save_quiz_answers_route(
+    request: Request,
+    module_id: int,
+    quiz_id: int,
+    payload: QuizSubmit,
+    db: Session = Depends(get_db),
+    current_user: Accounts = Depends(get_current_user),
+):
+    return save_quiz_answers(
         request=request,
         module_id=module_id,
         quiz_id=quiz_id,

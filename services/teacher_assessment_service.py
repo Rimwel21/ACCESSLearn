@@ -1,4 +1,5 @@
 from fastapi import HTTPException, Request, status
+import re
 from sqlalchemy.orm import Session
 from models.accounts import Accounts
 from models.learning_topic import LearningTopic
@@ -40,6 +41,7 @@ def create_teacher_assessment(request: Request, assessment: TeacherAssessmentCre
     _ensure_teacher(current_user)
     _validate_assessment_assignment(assessment, db, current_user)
     _validate_week(assessment.week)
+    time_limit = _validate_time_limit(assessment.assessment_type, assessment.time_limit)
 
     new_assessment = TeacherAssessment(
         teacher_id=current_user.id,
@@ -51,7 +53,7 @@ def create_teacher_assessment(request: Request, assessment: TeacherAssessmentCre
         description=assessment.description.strip(),
         category=assessment.category.strip() if assessment.category else None,
         week=assessment.week.strip() if assessment.week else None,
-        time_limit=assessment.time_limit.strip() if assessment.time_limit else None,
+        time_limit=time_limit,
         attempts_allowed=assessment.attempts_allowed,
         shuffle_questions=str(assessment.shuffle_questions).lower(),
         show_answers_after_submission=str(assessment.show_answers_after_submission).lower(),
@@ -84,8 +86,12 @@ def update_teacher_assessment(request: Request, assessment_id: int, update: Teac
             setattr(assessment, key, str(value).lower())
         elif key == "questions" and value is not None:
             setattr(assessment, key, [question.model_dump() for question in update.questions or []])
+        elif key == "time_limit" and assessment_type == "activity":
+            assessment.time_limit = None
         else:
             setattr(assessment, key, value.strip() if isinstance(value, str) else value)
+
+    assessment.time_limit = _validate_time_limit(assessment.assessment_type, assessment.time_limit)
 
     db.commit()
     db.refresh(assessment)
@@ -140,6 +146,28 @@ def _validate_week(week: str | None):
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Week must be one of: {', '.join(ALLOWED_LEARNING_WEEKS)}",
         )
+
+
+def _validate_time_limit(assessment_type: str, value: str | None):
+    if assessment_type == "activity":
+        return None
+
+    if value is None or not value.strip():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Enter a quiz time limit")
+
+    text = value.strip().lower()
+    match = re.fullmatch(r"(\d+)\s+(second|seconds|minute|minutes|hour|hours)", text)
+    if not match:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Quiz time limit must use seconds, minutes, or hours")
+
+    amount = int(match.group(1))
+    if amount <= 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Quiz time limit must be greater than zero")
+
+    unit = match.group(2)
+    base_unit = unit[:-1] if unit.endswith("s") else unit
+    singular = base_unit if amount == 1 else f"{base_unit}s"
+    return f"{amount} {singular}"
 
 
 def _validate_assessment_assignment(assessment: TeacherAssessmentCreate, db: Session, current_user: Accounts):
@@ -200,7 +228,7 @@ def _assessment_with_submissions(assessment: TeacherAssessment, db: Session):
         "description": assessment.description,
         "category": assessment.category,
         "week": assessment.week,
-        "time_limit": assessment.time_limit,
+        "time_limit": None,
         "attempts_allowed": assessment.attempts_allowed,
         "shuffle_questions": _string_to_bool(assessment.shuffle_questions),
         "show_answers_after_submission": _string_to_bool(assessment.show_answers_after_submission),
