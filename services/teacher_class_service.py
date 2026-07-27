@@ -55,6 +55,7 @@ def create_teacher_class(request: Request, teacher_class: TeacherClassCreate, db
         grade_level_id=teacher_class.grade_level_id,
         section_id=teacher_class.section_id,
         school_year=teacher_class.school_year.strip() if teacher_class.school_year else None,
+        student_count=0,
     )
 
     db.add(new_teacher_class)
@@ -81,6 +82,10 @@ def create_teacher_class(request: Request, teacher_class: TeacherClassCreate, db
         .first()
         )
 
+    if not result:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Unable to load created class")
+
+    result.student_count = _count_matching_students(result, db)
     return result
 
 
