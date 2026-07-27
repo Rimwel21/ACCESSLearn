@@ -299,6 +299,8 @@ def _dashboard_progress_for_student(student: StudentProfile, classes: list[Teach
         completed_topic_ids = set()
         in_progress_topic_ids = set()
         completed_activity_ids = set()
+        activity_question_total = 0
+        activity_correct_total = 0
         last_activity = None
         quiz_activity = None
     else:
@@ -352,6 +354,16 @@ def _dashboard_progress_for_student(student: StudentProfile, classes: list[Teach
         in_progress_topic_ids = {item.topic_id for item in topic_progress if item.status in {"started", "in_progress"}}
         completed_quiz_ids = {item.assessment_id for item in quiz_progress if item.status == "completed"}
         completed_activity_ids = {item.assessment_id for item in activity_progress if item.status == "completed"}
+        activity_question_total = sum(
+            len(assessment.questions or [])
+            for assessment in db.query(TeacherAssessment)
+            .filter(
+                TeacherAssessment.id.in_(activity_ids),
+                TeacherAssessment.assessment_type == "activity",
+            )
+            .all()
+        ) if activity_ids else 0
+        activity_correct_total = sum(item.score or 0 for item in activity_progress if item.status == "completed")
         total_items = len(topic_ids) + len(quiz_ids) + len(activity_ids)
         completed_items = len(completed_topic_ids) + len(completed_quiz_ids) + len(completed_activity_ids)
         activity_dates = [item.updated_at for item in topic_progress + quiz_progress + activity_progress if item.updated_at]
@@ -365,14 +377,14 @@ def _dashboard_progress_for_student(student: StudentProfile, classes: list[Teach
 
     status_percent = round((completed_items / total_items) * 100) if total_items else 0
     learning_material_percent = round((len(completed_topic_ids) / len(topic_ids)) * 100) if topic_ids else 0
-    activity_percent = round((len(completed_activity_ids) / len(activity_ids)) * 100) if activity_ids else 0
+    activity_percent = round((activity_correct_total / activity_question_total) * 100) if activity_question_total else 0
     status_value = "Complete" if total_items and completed_items == total_items else "Needs Help" if status_percent < 50 else "In Progress"
     return {
         "student_id": student.account_id,
         "student_name": student.name,
         "overall_percent": learning_material_percent,
-        "activities_completed": len(completed_activity_ids),
-        "activities_total": len(activity_ids),
+        "activities_completed": activity_correct_total,
+        "activities_total": activity_question_total,
         "activity_percent": activity_percent,
         "learning_materials_completed": len(completed_topic_ids),
         "learning_materials_in_progress": len(in_progress_topic_ids),
