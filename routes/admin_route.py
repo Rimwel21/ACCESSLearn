@@ -7,7 +7,7 @@ from utils.dependencies import get_db
 from models.accounts import Accounts
 from models.student_profile import StudentProfile
 from models.school_year import SchoolYear
-from models.grade_level import GradeLevel
+from models.grade_levels import GradeLevels
 from utils.admin_guard import require_admin
 from schemas.admin_schema import (
     AdminDashboardStats,
@@ -198,7 +198,7 @@ def get_grade_levels(
     db: Session = Depends(get_db),
     admin: Accounts = Depends(require_admin)
 ):
-    return db.query(GradeLevel).order_by(GradeLevel.name).all()
+    return db.query(GradeLevels).order_by(GradeLevels.name).all()
 
 @router.patch("/grade-levels/{grade_id}", response_model=GradeLevelOut)
 def update_grade_level(

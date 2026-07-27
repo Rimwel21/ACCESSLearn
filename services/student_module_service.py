@@ -1,3 +1,5 @@
+import re
+from datetime import timedelta
 from pathlib import Path
 from fastapi import HTTPException, Request, status
 from sqlalchemy.orm import Session, joinedload
@@ -303,6 +305,60 @@ def submit_quiz_progress(request: Request, module_id: int, quiz_id: int, answers
     )
 
 
+def start_quiz_progress(request: Request, module_id: int, quiz_id: int, db: Session, current_user: Accounts):
+    _ensure_student(current_user)
+    _ensure_enrolled_module(module_id, db, current_user)
+    assessment = _get_student_assessment(module_id, quiz_id, db, "quiz")
+    _ensure_quiz_unlocked(module_id, db, current_user)
+
+    progress = _get_or_create_assessment_progress(current_user.id, module_id, quiz_id, db)
+    if not progress.started_at:
+        progress.started_at = utc_now()
+
+    expired = _is_time_limit_expired(assessment, progress)
+    if expired and progress.status != "completed":
+        _complete_assessment_progress(progress, assessment, progress.answers or {})
+
+    db.commit()
+    if progress.status == "completed":
+        return {
+            "started_at": progress.started_at,
+            "time_limit_seconds": _parse_time_limit_seconds(assessment.time_limit),
+            "expired": expired,
+            "completed": True,
+            "score": progress.score,
+            "total": progress.total,
+            "progress": get_module_progress(request, module_id, db, current_user),
+        }
+
+    return {
+        "started_at": progress.started_at,
+        "time_limit_seconds": _parse_time_limit_seconds(assessment.time_limit),
+        "expired": expired,
+        "completed": False,
+    }
+
+
+def save_quiz_answers(request: Request, module_id: int, quiz_id: int, answers: dict, db: Session, current_user: Accounts):
+    _ensure_student(current_user)
+    _ensure_enrolled_module(module_id, db, current_user)
+    assessment = _get_student_assessment(module_id, quiz_id, db, "quiz")
+    _ensure_quiz_unlocked(module_id, db, current_user)
+
+    progress = _get_or_create_assessment_progress(current_user.id, module_id, quiz_id, db)
+    _ensure_quiz_started(assessment, progress)
+    if progress.status == "completed":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Quiz already submitted")
+    if _is_time_limit_expired(assessment, progress):
+        _complete_assessment_progress(progress, assessment, progress.answers or {})
+        db.commit()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Quiz time limit has expired")
+
+    progress.answers = answers or {}
+    db.commit()
+    return {"detail": "Answers saved"}
+
+
 def submit_assessment_progress(
     request: Request,
     module_id: int,
@@ -314,58 +370,31 @@ def submit_assessment_progress(
 ):
     _ensure_student(current_user)
     _ensure_enrolled_module(module_id, db, current_user)
-    assessment_filters = [
-        TeacherAssessment.id == assessment_id,
-        TeacherAssessment.module_id == module_id,
-    ]
-    if assessment_type:
-        assessment_filters.append(TeacherAssessment.assessment_type == assessment_type)
-
-    assessment = db.query(TeacherAssessment).filter(*assessment_filters).first()
-    if not assessment:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assessment not found")
+    assessment = _get_student_assessment(module_id, assessment_id, db, assessment_type)
 
     if assessment.assessment_type == "quiz":
-        topic_count = db.query(LearningTopic).filter(LearningTopic.module_id == module_id).count()
-        completed_topic_count = db.query(StudentTopicProgress).filter(
-            StudentTopicProgress.student_id == current_user.id,
-            StudentTopicProgress.module_id == module_id,
-            StudentTopicProgress.status == "completed",
-        ).count()
-        if topic_count and completed_topic_count < topic_count:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Complete all topics before taking the quiz")
+        _ensure_quiz_unlocked(module_id, db, current_user)
 
-    questions = assessment.questions or []
-    total = len(questions)
-    score = 0
-    for index, question in enumerate(questions):
-        expected = _normalize_answer(question.get("answer") or "")
-        actual = _normalize_answer(str(answers.get(str(index), answers.get(index, ""))))
-        if expected and expected == actual:
-            score += 1
+    progress = _get_or_create_assessment_progress(current_user.id, module_id, assessment_id, db)
+    if assessment.assessment_type == "quiz":
+        _ensure_quiz_started(assessment, progress)
 
-    progress = db.query(StudentQuizProgress).filter(
-        StudentQuizProgress.student_id == current_user.id,
-        StudentQuizProgress.assessment_id == assessment_id,
-    ).first()
-    if not progress:
-        progress = StudentQuizProgress(
-            student_id=current_user.id,
-            module_id=module_id,
-            assessment_id=assessment_id,
-        )
-        db.add(progress)
+    if progress.status == "completed":
+        return {
+            "score": progress.score or 0,
+            "total": progress.total or 0,
+            "progress": get_module_progress(request, module_id, db, current_user),
+        }
 
-    progress.status = "completed"
-    progress.score = score
-    progress.total = total
-    progress.answers = answers
-    progress.completed_at = utc_now()
+    if assessment.assessment_type == "quiz" and _is_time_limit_expired(assessment, progress):
+        _complete_assessment_progress(progress, assessment, progress.answers or {})
+    else:
+        _complete_assessment_progress(progress, assessment, answers)
     db.commit()
 
     return {
-        "score": score,
-        "total": total,
+        "score": progress.score or 0,
+        "total": progress.total or 0,
         "progress": get_module_progress(request, module_id, db, current_user),
     }
 
@@ -408,6 +437,105 @@ def submit_class_activity_progress(request: Request, activity_id: int, answers: 
         "score": score,
         "total": total,
     }
+
+
+def _get_student_assessment(module_id: int, assessment_id: int, db: Session, assessment_type: str | None = None):
+    assessment_filters = [
+        TeacherAssessment.id == assessment_id,
+        TeacherAssessment.module_id == module_id,
+    ]
+    if assessment_type:
+        assessment_filters.append(TeacherAssessment.assessment_type == assessment_type)
+
+    assessment = db.query(TeacherAssessment).filter(*assessment_filters).first()
+    if not assessment:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assessment not found")
+    return assessment
+
+
+def _ensure_quiz_unlocked(module_id: int, db: Session, current_user: Accounts):
+    topic_count = db.query(LearningTopic).filter(LearningTopic.module_id == module_id).count()
+    completed_topic_count = db.query(StudentTopicProgress).filter(
+        StudentTopicProgress.student_id == current_user.id,
+        StudentTopicProgress.module_id == module_id,
+        StudentTopicProgress.status == "completed",
+    ).count()
+    if topic_count and completed_topic_count < topic_count:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Complete all topics before taking the quiz")
+
+
+def _get_or_create_assessment_progress(student_id: int, module_id: int | None, assessment_id: int, db: Session):
+    progress = db.query(StudentQuizProgress).filter(
+        StudentQuizProgress.student_id == student_id,
+        StudentQuizProgress.assessment_id == assessment_id,
+    ).first()
+    if not progress:
+        progress = StudentQuizProgress(
+            student_id=student_id,
+            module_id=module_id,
+            assessment_id=assessment_id,
+        )
+        db.add(progress)
+    return progress
+
+
+def _ensure_quiz_started(assessment: TeacherAssessment, progress: StudentQuizProgress):
+    if assessment.assessment_type == "quiz" and _parse_time_limit_seconds(assessment.time_limit) and not progress.started_at:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Start the quiz before submitting answers")
+
+
+def _complete_assessment_progress(progress: StudentQuizProgress, assessment: TeacherAssessment, answers: dict):
+    questions = assessment.questions or []
+    score = _score_answers(questions, answers or {})
+
+    progress.status = "completed"
+    progress.score = score
+    progress.total = len(questions)
+    progress.answers = answers or {}
+    progress.completed_at = utc_now()
+
+
+def _score_answers(questions: list[dict], answers: dict):
+    score = 0
+    for index, question in enumerate(questions):
+        expected = _normalize_answer(question.get("answer") or "")
+        actual = _normalize_answer(str(answers.get(str(index), answers.get(index, ""))))
+        if expected and expected == actual:
+            score += 1
+    return score
+
+
+def _parse_time_limit_seconds(value: str | None):
+    if not value:
+        return None
+    text = value.strip().lower()
+    if not text:
+        return None
+
+    match = re.search(r"(\d+(?:\.\d+)?)", text)
+    if not match:
+        return None
+    amount = float(match.group(1))
+    if amount <= 0:
+        return None
+
+    unit_match = re.search(r"\d+(?:\.\d+)?\s*([a-z]+)", text)
+    unit = unit_match.group(1) if unit_match else ""
+
+    if unit.startswith(("h", "hr")):
+        seconds = amount * 3600
+    elif unit.startswith(("m", "min")):
+        seconds = amount * 60
+    else:
+        seconds = amount
+    return max(1, round(seconds))
+
+
+def _is_time_limit_expired(assessment: TeacherAssessment, progress: StudentQuizProgress):
+    seconds = _parse_time_limit_seconds(assessment.time_limit)
+    if not seconds or not progress.started_at:
+        return False
+    return utc_now() >= progress.started_at + timedelta(seconds=seconds)
 
 
 def _get_student_profile(db: Session, current_user: Accounts):
@@ -501,7 +629,7 @@ def _assessment_to_dict(assessment: TeacherAssessment, db: Session | None = None
         "description": assessment.description,
         "category": assessment.category,
         "week": assessment.week,
-        "time_limit": assessment.time_limit,
+        "time_limit": assessment.time_limit if assessment.assessment_type == "quiz" else None,
         "attempts_allowed": assessment.attempts_allowed,
         "shuffle_questions": _string_to_bool(assessment.shuffle_questions),
         "show_answers_after_submission": _string_to_bool(assessment.show_answers_after_submission),

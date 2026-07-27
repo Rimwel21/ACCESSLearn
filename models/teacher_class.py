@@ -15,6 +15,8 @@ class TeacherClass(Base):
 
     class_name = Column(String(120), nullable=False, default="Class")
     subject = Column(String(120), nullable=False, default="General")
+    grade_level = Column(String(50), nullable=True)
+    section = Column(String(100), nullable=True)
 
     grade_level_id = Column(Integer, ForeignKey("grade_levels.id"), nullable=False, index=True)
     grade_levels = relationship("GradeLevels", back_populates="teacher_classes")
