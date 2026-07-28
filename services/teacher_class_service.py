@@ -15,6 +15,7 @@ from models.HI_sections import HI_SECTIONS
 from schemas.teacher_class_schema import TeacherClassCreate
 from services.academic_service import get_grade_level_or_404, get_section_for_grade_or_400
 from utils.enum import RoleEnum
+from utils.utc_now import utc_now
 
 
 def _ensure_teacher(current_user: Accounts):
@@ -59,8 +60,8 @@ def list_teacher_classes(request: Request, db: Session, current_user: Accounts):
             "school_year": None,
             "student_count": student_count,
             "teacher_id": current_user.id,
-            "created_at": datetime.utcnow(),
-            "updated_at": datetime.utcnow(),
+            "created_at": utc_now,
+            "updated_at": utc_now,
         })
     return result
 
@@ -457,9 +458,7 @@ def create_teacher_class(request: Request, teacher_class: TeacherClassCreate, db
         teacher_id=current_user.id,
         class_name=teacher_class.class_name.strip(),
         subject=teacher_class.subject.strip(),
-        grade_level=grade_level.name,
         grade_level_id=teacher_class.grade_level_id,
-        section=section.name,
         section_id=section.id,
         school_year=teacher_class.school_year.strip() if teacher_class.school_year else None,
         student_count=0,
