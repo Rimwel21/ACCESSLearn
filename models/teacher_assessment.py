@@ -18,6 +18,7 @@ class TeacherAssessment(Base):
     category = Column(String(80), nullable=True)
     week = Column(String(30), nullable=True)
     time_limit = Column(String(30), nullable=True)
+    time_limit_seconds = Column(Integer, nullable=True)
     attempts_allowed = Column(Integer, default=1, nullable=False)
     shuffle_questions = Column(String(10), default="true", nullable=False)
     show_answers_after_submission = Column(String(10), default="true", nullable=False)

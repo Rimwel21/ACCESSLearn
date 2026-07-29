@@ -167,6 +167,74 @@ def _ensure_teacher_assessments_schema() -> None:
                 "ALTER TABLE teacher_assessments "
                 "ADD COLUMN IF NOT EXISTS due_at TIMESTAMP WITH TIME ZONE"
             ))
+        if "time_limit_seconds" not in columns:
+            connection.execute(text(
+                "ALTER TABLE teacher_assessments "
+                "ADD COLUMN IF NOT EXISTS time_limit_seconds INTEGER"
+            ))
+            rows = connection.execute(text(
+                "SELECT id, time_limit FROM teacher_assessments WHERE time_limit IS NOT NULL"
+            )).fetchall()
+            for row in rows:
+                seconds = _parse_time_limit_seconds(row.time_limit)
+                if seconds:
+                    connection.execute(
+                        text("UPDATE teacher_assessments SET time_limit_seconds = :seconds WHERE id = :id"),
+                        {"seconds": seconds, "id": row.id},
+                    )
+
+    _ensure_student_quiz_progress_schema()
+
+
+def _ensure_student_quiz_progress_schema() -> None:
+    inspector = inspect(engine)
+    table_name = "student_quiz_progress"
+
+    if not inspector.has_table(table_name):
+        return
+
+    columns = {column["name"] for column in inspector.get_columns(table_name)}
+
+    with engine.begin() as connection:
+        if "time_limit_seconds" not in columns:
+            connection.execute(text(
+                "ALTER TABLE student_quiz_progress "
+                "ADD COLUMN IF NOT EXISTS time_limit_seconds INTEGER"
+            ))
+        if "expires_at" not in columns:
+            connection.execute(text(
+                "ALTER TABLE student_quiz_progress "
+                "ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP WITH TIME ZONE"
+            ))
+        if "submission_type" not in columns:
+            connection.execute(text(
+                "ALTER TABLE student_quiz_progress "
+                "ADD COLUMN IF NOT EXISTS submission_type VARCHAR(20)"
+            ))
+        if engine.dialect.name == "postgresql":
+            connection.execute(text(
+                "ALTER TABLE student_quiz_progress "
+                "ALTER COLUMN started_at DROP NOT NULL"
+            ))
+
+
+def _parse_time_limit_seconds(value: str | None) -> int | None:
+    if not value:
+        return None
+    parts = value.strip().lower().split()
+    if not parts or not parts[0].isdigit():
+        return None
+    amount = int(parts[0])
+    if amount <= 0:
+        return None
+    unit = parts[1] if len(parts) > 1 else "seconds"
+    if unit.startswith("hour"):
+        return amount * 3600
+    if unit.startswith("minute"):
+        return amount * 60
+    if unit.startswith("second"):
+        return amount
+    return None
 
 
 def _ensure_student_profile_registration_schema() -> None:

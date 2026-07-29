@@ -424,7 +424,8 @@ def _format_quiz_activity(progress: StudentQuizProgress, db: Session):
     if not assessment:
         return None
     if progress.total:
-        return f"{assessment.title}: {progress.score or 0}/{progress.total}"
+        source = " Auto-submitted" if progress.submission_type == "timed_out" else ""
+        return f"{assessment.title}: {progress.score or 0}/{progress.total}{source}"
     return assessment.title
 
 

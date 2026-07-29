@@ -17,6 +17,7 @@ class TeacherAssessmentBase(BaseModel):
     category: str | None = Field(default=None, max_length=80)
     week: str | None = Field(default=None, max_length=30)
     time_limit: str | None = Field(default=None, max_length=30)
+    time_limit_seconds: int | None = Field(default=None, ge=1)
     attempts_allowed: int = Field(default=1, ge=1, le=99)
     shuffle_questions: bool = True
     show_answers_after_submission: bool = True
@@ -44,6 +45,7 @@ class TeacherAssessmentUpdate(BaseModel):
     category: str | None = Field(default=None, max_length=80)
     week: str | None = Field(default=None, max_length=30)
     time_limit: str | None = Field(default=None, max_length=30)
+    time_limit_seconds: int | None = Field(default=None, ge=1)
     attempts_allowed: int | None = Field(default=None, ge=1, le=99)
     shuffle_questions: bool | None = None
     show_answers_after_submission: bool | None = None
@@ -66,6 +68,7 @@ class ActivitySubmissionOut(BaseModel):
     total: int | None = None
     answers: dict = Field(default_factory=dict)
     completed_at: datetime | None = None
+    submission_type: str | None = None
 
 
 class TeacherAssessmentOut(TeacherAssessmentBase):
@@ -76,6 +79,11 @@ class TeacherAssessmentOut(TeacherAssessmentBase):
     student_score: int | None = None
     student_total: int | None = None
     student_completed_at: datetime | None = None
+    student_started_at: datetime | None = None
+    student_expires_at: datetime | None = None
+    student_remaining_seconds: int | None = None
+    student_submission_type: str | None = None
+    student_answers: dict = Field(default_factory=dict)
     submissions_count: int = 0
     submissions: list[ActivitySubmissionOut] = Field(default_factory=list)
     created_at: datetime
