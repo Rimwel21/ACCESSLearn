@@ -38,11 +38,17 @@ async def upload_image_profile(request: Request, image: UploadFile, db:Session, 
     
     file_bytes = await image.read()
 
-    uploaded = await asyncio.to_thread(
-            upload_file,
-            file_bytes,
-            folder
-        )
+    try:
+        uploaded = await asyncio.to_thread(
+                upload_file,
+                file_bytes,
+                folder
+            )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Profile image upload failed. Please try another image or update without an image.",
+        ) from exc
     
     if not profile_image:
 
@@ -78,10 +84,13 @@ async def upload_image_profile(request: Request, image: UploadFile, db:Session, 
     db.refresh(profile_image)
 
     if old_public_id:
-        await asyncio.to_thread(
-            delete_file,
-            old_public_id
-        )
+        try:
+            await asyncio.to_thread(
+                delete_file,
+                old_public_id
+            )
+        except Exception:
+            pass
 
     return profile_image
 

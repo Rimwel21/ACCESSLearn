@@ -22,3 +22,7 @@ alembic/versions/__pycache__/
 delete_user.py
 practice.py
 python_seed.py
+
+# generated learning-material artifacts
+static/pdf_pages/
+uploads/learning_materials/
