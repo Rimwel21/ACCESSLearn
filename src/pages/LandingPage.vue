@@ -132,7 +132,7 @@
         <!-- Footer -->
         <div class="mt-auto pt-8 pb-4">
           <div class="text-center text-[10px] sm:text-xs font-bold text-gray-400">
-            © {{ new Date().getFullYear() }} ACCESSLearn Inc. | Philippine Schools Initiative | WCAG 2.2 Compliant
+            © {{ new Date().getFullYear() }} ACCESSLearn Inc. | Philippine Schools Initiative | WCAG 2.2 Accessible learning.
           </div>
         </div>
       </div>
