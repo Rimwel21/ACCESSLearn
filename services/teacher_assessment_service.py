@@ -41,7 +41,11 @@ def create_teacher_assessment(request: Request, assessment: TeacherAssessmentCre
     _ensure_teacher(current_user)
     _validate_assessment_assignment(assessment, db, current_user)
     _validate_week(assessment.week)
-    time_limit = _validate_time_limit(assessment.assessment_type, assessment.time_limit)
+    time_limit_seconds = _validate_time_limit_seconds(
+        assessment.assessment_type,
+        assessment.time_limit_seconds,
+        assessment.time_limit,
+    )
 
     new_assessment = TeacherAssessment(
         teacher_id=current_user.id,
@@ -53,7 +57,8 @@ def create_teacher_assessment(request: Request, assessment: TeacherAssessmentCre
         description=assessment.description.strip(),
         category=assessment.category.strip() if assessment.category else None,
         week=assessment.week.strip() if assessment.week else None,
-        time_limit=time_limit,
+        time_limit=None,
+        time_limit_seconds=time_limit_seconds,
         attempts_allowed=assessment.attempts_allowed,
         shuffle_questions=str(assessment.shuffle_questions).lower(),
         show_answers_after_submission=str(assessment.show_answers_after_submission).lower(),
@@ -86,12 +91,23 @@ def update_teacher_assessment(request: Request, assessment_id: int, update: Teac
             setattr(assessment, key, str(value).lower())
         elif key == "questions" and value is not None:
             setattr(assessment, key, [question.model_dump() for question in update.questions or []])
-        elif key == "time_limit" and assessment_type == "activity":
-            assessment.time_limit = None
+        elif key in {"time_limit", "time_limit_seconds"}:
+            continue
         else:
             setattr(assessment, key, value.strip() if isinstance(value, str) else value)
 
-    assessment.time_limit = _validate_time_limit(assessment.assessment_type, assessment.time_limit)
+    if assessment.assessment_type == "activity":
+        assessment.time_limit = None
+        assessment.time_limit_seconds = None
+    else:
+        incoming_seconds = update_data.get("time_limit_seconds", assessment.time_limit_seconds)
+        incoming_text = update_data.get("time_limit", assessment.time_limit)
+        assessment.time_limit_seconds = _validate_time_limit_seconds(
+            assessment.assessment_type,
+            incoming_seconds,
+            incoming_text,
+        )
+        assessment.time_limit = None
 
     db.commit()
     db.refresh(assessment)
@@ -148,14 +164,19 @@ def _validate_week(week: str | None):
         )
 
 
-def _validate_time_limit(assessment_type: str, value: str | None):
+def _validate_time_limit_seconds(assessment_type: str, seconds: int | None, text_value: str | None = None):
     if assessment_type == "activity":
         return None
 
-    if value is None or not value.strip():
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Enter a quiz time limit")
+    if seconds is not None:
+        if not isinstance(seconds, int) or isinstance(seconds, bool) or seconds <= 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Quiz time limit must be a positive whole number of seconds")
+        return seconds
 
-    text = value.strip().lower()
+    if text_value is None or not text_value.strip():
+        return None
+
+    text = text_value.strip().lower()
     match = re.fullmatch(r"(\d+)\s+(second|seconds|minute|minutes|hour|hours)", text)
     if not match:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Quiz time limit must use seconds, minutes, or hours")
@@ -165,9 +186,11 @@ def _validate_time_limit(assessment_type: str, value: str | None):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Quiz time limit must be greater than zero")
 
     unit = match.group(2)
-    base_unit = unit[:-1] if unit.endswith("s") else unit
-    singular = base_unit if amount == 1 else f"{base_unit}s"
-    return f"{amount} {singular}"
+    if unit.startswith("hour"):
+        return amount * 3600
+    if unit.startswith("minute"):
+        return amount * 60
+    return amount
 
 
 def _validate_assessment_assignment(assessment: TeacherAssessmentCreate, db: Session, current_user: Accounts):
@@ -229,6 +252,7 @@ def _assessment_with_submissions(assessment: TeacherAssessment, db: Session):
         "category": assessment.category,
         "week": assessment.week,
         "time_limit": None,
+        "time_limit_seconds": None,
         "attempts_allowed": assessment.attempts_allowed,
         "shuffle_questions": _string_to_bool(assessment.shuffle_questions),
         "show_answers_after_submission": _string_to_bool(assessment.show_answers_after_submission),
@@ -244,6 +268,7 @@ def _assessment_with_submissions(assessment: TeacherAssessment, db: Session):
                 "total": progress.total,
                 "answers": progress.answers or {},
                 "completed_at": progress.completed_at,
+                "submission_type": progress.submission_type,
             }
             for progress, student in submissions
         ],

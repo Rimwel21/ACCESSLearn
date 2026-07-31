@@ -17,7 +17,10 @@ class StudentQuizProgress(Base):
     score = Column(Integer, nullable=True)
     total = Column(Integer, nullable=True)
     answers = Column(JSON, default=dict, nullable=False)
+    time_limit_seconds = Column(Integer, nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+    submission_type = Column(String(20), nullable=True)
 
-    started_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
+    started_at = Column(DateTime(timezone=True), nullable=True)
     completed_at = Column(DateTime(timezone=True), nullable=True)
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
