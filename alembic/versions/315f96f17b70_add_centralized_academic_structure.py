@@ -8,6 +8,7 @@ Create Date: 2026-07-11 14:39:08.292490
 from typing import Sequence, Union
 
 from alembic import op
+from alembic import context
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
@@ -44,12 +45,94 @@ def _has_foreign_key(inspector, table_name: str, constrained_columns: list[str],
     )
 
 
+def _upgrade_offline(section_status: postgresql.ENUM) -> None:
+    op.alter_column('grade_levels', 'name',
+               existing_type=sa.String(length=20),
+               type_=sa.String(length=100),
+               existing_nullable=False)
+    op.add_column('grade_levels', sa.Column('status', section_status, server_default='active', nullable=False))
+    op.alter_column('grade_levels', 'status', server_default=None)
+    op.add_column('grade_levels', sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False))
+    op.alter_column('grade_levels', 'created_at', server_default=None)
+    op.add_column('grade_levels', sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False))
+    op.alter_column('grade_levels', 'updated_at', server_default=None)
+    op.create_index(op.f('ix_grade_levels_status'), 'grade_levels', ['status'], unique=False)
+
+    op.create_table('school_years',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('name', sa.String(length=100), nullable=False),
+    sa.Column('is_current', sa.Boolean(), nullable=False),
+    sa.Column('status', section_status, nullable=False),
+    sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
+    sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
+    sa.PrimaryKeyConstraint('id'),
+    sa.UniqueConstraint('name')
+    )
+    op.create_index(op.f('ix_school_years_id'), 'school_years', ['id'], unique=False)
+    op.create_index(op.f('ix_school_years_status'), 'school_years', ['status'], unique=False)
+
+    op.create_table('sections',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('name', sa.String(length=100), nullable=False),
+    sa.Column('capacity', sa.Integer(), nullable=False),
+    sa.Column('subject', sa.String(length=100), nullable=True),
+    sa.Column('status', section_status, nullable=False),
+    sa.Column('grade_level_id', sa.Integer(), nullable=False),
+    sa.Column('school_year_id', sa.Integer(), nullable=True),
+    sa.Column('teacher_id', sa.Integer(), nullable=True),
+    sa.Column('created_by', sa.Integer(), nullable=True),
+    sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
+    sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
+    sa.ForeignKeyConstraint(['created_by'], ['accounts.id'], ondelete='SET NULL'),
+    sa.ForeignKeyConstraint(['grade_level_id'], ['grade_levels.id'], ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['school_year_id'], ['school_years.id'], ondelete='SET NULL'),
+    sa.ForeignKeyConstraint(['teacher_id'], ['accounts.id'], ondelete='SET NULL'),
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_index(op.f('ix_sections_grade_level_id'), 'sections', ['grade_level_id'], unique=False)
+    op.create_index(op.f('ix_sections_id'), 'sections', ['id'], unique=False)
+    op.create_index(op.f('ix_sections_school_year_id'), 'sections', ['school_year_id'], unique=False)
+    op.create_index(op.f('ix_sections_status'), 'sections', ['status'], unique=False)
+    op.create_index(op.f('ix_sections_teacher_id'), 'sections', ['teacher_id'], unique=False)
+
+    op.create_table('teacher_assignment_history',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('section_id', sa.Integer(), nullable=False),
+    sa.Column('previous_teacher_id', sa.Integer(), nullable=True),
+    sa.Column('new_teacher_id', sa.Integer(), nullable=True),
+    sa.Column('assigned_by', sa.Integer(), nullable=True),
+    sa.Column('assigned_at', sa.DateTime(timezone=True), nullable=False),
+    sa.ForeignKeyConstraint(['assigned_by'], ['accounts.id'], ondelete='SET NULL'),
+    sa.ForeignKeyConstraint(['new_teacher_id'], ['accounts.id'], ondelete='SET NULL'),
+    sa.ForeignKeyConstraint(['previous_teacher_id'], ['accounts.id'], ondelete='SET NULL'),
+    sa.ForeignKeyConstraint(['section_id'], ['sections.id'], ondelete='CASCADE'),
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_index(op.f('ix_teacher_assignment_history_id'), 'teacher_assignment_history', ['id'], unique=False)
+    op.create_index(op.f('ix_teacher_assignment_history_new_teacher_id'), 'teacher_assignment_history', ['new_teacher_id'], unique=False)
+    op.create_index(op.f('ix_teacher_assignment_history_previous_teacher_id'), 'teacher_assignment_history', ['previous_teacher_id'], unique=False)
+    op.create_index(op.f('ix_teacher_assignment_history_section_id'), 'teacher_assignment_history', ['section_id'], unique=False)
+
+    op.alter_column('student_profiles', 'age',
+               existing_type=sa.INTEGER(),
+               nullable=True)
+    op.alter_column('student_profiles', 'sex',
+               existing_type=postgresql.ENUM('Male', 'Female', name='usersex'),
+               nullable=True)
+    op.alter_column('student_profiles', 'student_type',
+               existing_type=postgresql.ENUM('regular', 'HI', name='studenttype'),
+               nullable=True)
+
+
 def upgrade() -> None:
     """Upgrade schema."""
     bind = op.get_bind()
-    inspector = sa.inspect(bind)
     section_status = postgresql.ENUM('active', 'archived', name='sectionstatusenum', create_type=False)
     section_status.create(bind, checkfirst=True)
+    if context.is_offline_mode():
+        _upgrade_offline(section_status)
+        return
+    inspector = sa.inspect(bind)
 
     if not _has_table(inspector, 'grade_levels'):
         op.create_table('grade_levels',

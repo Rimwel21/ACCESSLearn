@@ -8,6 +8,7 @@ Create Date: 2026-07-27 00:00:00.000000
 from typing import Sequence, Union
 
 from alembic import op
+from alembic import context
 import sqlalchemy as sa
 from sqlalchemy import inspect, text
 
@@ -43,6 +44,9 @@ def _has_index(table_name: str, index_name: str) -> bool:
 
 
 def upgrade() -> None:
+    if context.is_offline_mode():
+        return
+
     bind = op.get_bind()
 
     if _has_table("teacher_modules") and not _has_column("teacher_modules", "due_at"):

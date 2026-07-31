@@ -8,6 +8,7 @@ Create Date: 2026-07-29 00:00:00.000000
 from typing import Sequence, Union
 
 from alembic import op
+from alembic import context
 import sqlalchemy as sa
 
 
@@ -23,6 +24,8 @@ def upgrade() -> None:
     _add_column_if_missing("student_quiz_progress", sa.Column("expires_at", sa.DateTime(timezone=True), nullable=True))
     _add_column_if_missing("student_quiz_progress", sa.Column("submission_type", sa.String(length=20), nullable=True))
     op.alter_column("student_quiz_progress", "started_at", existing_type=sa.DateTime(timezone=True), nullable=True)
+    if context.is_offline_mode():
+        return
 
     connection = op.get_bind()
     rows = connection.execute(sa.text("SELECT id, time_limit FROM teacher_assessments WHERE time_limit IS NOT NULL")).fetchall()
@@ -44,12 +47,18 @@ def downgrade() -> None:
 
 
 def _add_column_if_missing(table_name: str, column: sa.Column) -> None:
+    if context.is_offline_mode():
+        op.add_column(table_name, column)
+        return
     columns = {item["name"] for item in sa.inspect(op.get_bind()).get_columns(table_name)}
     if column.name not in columns:
         op.add_column(table_name, column)
 
 
 def _drop_column_if_exists(table_name: str, column_name: str) -> None:
+    if context.is_offline_mode():
+        op.drop_column(table_name, column_name)
+        return
     columns = {item["name"] for item in sa.inspect(op.get_bind()).get_columns(table_name)}
     if column_name in columns:
         op.drop_column(table_name, column_name)
