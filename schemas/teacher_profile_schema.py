@@ -1,13 +1,13 @@
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 from datetime import datetime
-from utils.enum import GradeLevel, UserSex
+from utils.enum import UserSex
 
 class TeacherProfileBase(BaseModel):
     name: str = Field(min_length=5, max_length=50)
     age: int = Field(ge=18, le=100)
     sex: UserSex
     contact_no: str
-    grade_level_handles: list[GradeLevel]
+    grade_level_ids: list[int]
     address: str = Field(min_length=5, max_length=150)
 
     @model_validator(mode="before")
@@ -45,9 +45,9 @@ class TeacherProfileBase(BaseModel):
             raise ValueError("Contact number consists of 11 numbers.")
         return value
 
-    @field_validator("grade_level_handles")
+    @field_validator("grade_level_ids")
     @classmethod
-    def validate_grade_level_handles(cls, value: list[GradeLevel]):
+    def validate_grade_level_ids(cls, value: list[int]):
         if not value:
             raise ValueError("include grade level handles")
         return value
@@ -60,7 +60,7 @@ class TeacherProfileUpdate(BaseModel):
     age: int | None = Field(default=None, ge=18, le=100)
     sex: UserSex | None = None
     contact_no: str | None = None
-    grade_level_handles: list[GradeLevel] | None = None
+    grade_level_ids: list[int] | None = None
     address: str | None = Field(default=None, min_length=5, max_length=150)
 
     @model_validator(mode="before")
@@ -96,16 +96,25 @@ class TeacherProfileUpdate(BaseModel):
             raise ValueError("Contact number consists of 11 numbers.")
         return value
 
-    @field_validator("grade_level_handles")
+    @field_validator("grade_level_ids")
     @classmethod
-    def validate_grade_level_handles(cls, value: list[GradeLevel] | None):
+    def validate_grade_level_ids(cls, value: list[int] | None):
         if value is not None and not value:
             raise ValueError("include grade level handles")
         return value
 
 
+class GradeLevelOut(BaseModel):
+    id: int
+    name: str
+
+    class Config:
+        from_attributes = True
+
+
 class TeacherGradeHandlesOut(BaseModel):
-    grade_level_handles: GradeLevel
+    grade_level_id: int
+    grade_level: GradeLevelOut
 
     class Config:
         from_attributes = True

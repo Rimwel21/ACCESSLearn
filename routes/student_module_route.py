@@ -3,14 +3,17 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from limiter import limiter
 from models.accounts import Accounts
-from schemas.teacher_module_schema import StudentProgressOut, TeacherModuleDetailOut
+from schemas.teacher_module_schema import StudentDeadlineOut, StudentProgressOut, TeacherModuleDetailOut
 from schemas.teacher_assessment_schema import TeacherAssessmentOut
 from services.student_module_service import (
     get_student_activity,
     get_module_progress,
     get_student_module,
+    list_upcoming_deadlines,
     list_student_activities,
     list_student_modules,
+    save_quiz_answers,
+    start_quiz_progress,
     submit_assessment_progress,
     submit_class_activity_progress,
     submit_quiz_progress,
@@ -29,6 +32,7 @@ class QuizSubmit(BaseModel):
 
 router = APIRouter(prefix="/student/modules", tags=["Student Modules"])
 activities_router = APIRouter(prefix="/student/activities", tags=["Student Activities"])
+deadlines_router = APIRouter(prefix="/student/deadlines", tags=["Student Deadlines"])
 
 
 @activities_router.get("/", response_model=list[TeacherAssessmentOut])
@@ -65,6 +69,18 @@ def submit_student_activity_route(
 @limiter.limit("20/minute")
 def list_student_modules_route(request: Request, db: Session = Depends(get_db), current_user: Accounts = Depends(get_current_user)):
     return list_student_modules(request=request, db=db, current_user=current_user)
+
+
+@router.get("/deadlines/upcoming", response_model=list[StudentDeadlineOut])
+@limiter.limit("20/minute")
+def list_upcoming_deadlines_route(request: Request, db: Session = Depends(get_db), current_user: Accounts = Depends(get_current_user)):
+    return list_upcoming_deadlines(request=request, db=db, current_user=current_user)
+
+
+@deadlines_router.get("/upcoming", response_model=list[StudentDeadlineOut])
+@limiter.limit("20/minute")
+def list_student_deadlines_route(request: Request, db: Session = Depends(get_db), current_user: Accounts = Depends(get_current_user)):
+    return list_upcoming_deadlines(request=request, db=db, current_user=current_user)
 
 
 @router.get("/{module_id}", response_model=TeacherModuleDetailOut)
@@ -110,6 +126,44 @@ def submit_quiz_progress_route(
     current_user: Accounts = Depends(get_current_user),
 ):
     return submit_quiz_progress(
+        request=request,
+        module_id=module_id,
+        quiz_id=quiz_id,
+        answers=payload.answers,
+        db=db,
+        current_user=current_user,
+    )
+
+
+@router.post("/{module_id}/quizzes/{quiz_id}/start")
+@limiter.limit("20/minute")
+def start_quiz_progress_route(
+    request: Request,
+    module_id: int,
+    quiz_id: int,
+    db: Session = Depends(get_db),
+    current_user: Accounts = Depends(get_current_user),
+):
+    return start_quiz_progress(
+        request=request,
+        module_id=module_id,
+        quiz_id=quiz_id,
+        db=db,
+        current_user=current_user,
+    )
+
+
+@router.post("/{module_id}/quizzes/{quiz_id}/answers")
+@limiter.limit("60/minute")
+def save_quiz_answers_route(
+    request: Request,
+    module_id: int,
+    quiz_id: int,
+    payload: QuizSubmit,
+    db: Session = Depends(get_db),
+    current_user: Accounts = Depends(get_current_user),
+):
+    return save_quiz_answers(
         request=request,
         module_id=module_id,
         quiz_id=quiz_id,

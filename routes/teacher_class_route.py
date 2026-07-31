@@ -1,20 +1,53 @@
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 from limiter import limiter
 from models.accounts import Accounts
-from schemas.teacher_class_schema import ClassStudentOut, TeacherClassCreate, TeacherClassOut, TeacherClassUpdate
+from schemas.teacher_class_schema import ClassStudentOut, RecentActivityOut, TeacherClassCreate, TeacherClassOut, TeacherDashboardSummaryOut
 from services.teacher_class_service import (
     create_teacher_class,
     delete_teacher_class,
     get_teacher_class,
+    get_teacher_dashboard_summary,
+    list_recent_activities,
     list_class_students,
     list_teacher_classes,
-    update_teacher_class,
 )
 from utils.dependencies import get_current_user, get_db
 
 
 router = APIRouter(prefix="/teacher/classes", tags=["Teacher Classes"])
+
+
+@router.get("/dashboard-summary", response_model=TeacherDashboardSummaryOut)
+@limiter.limit("20/minute")
+def get_teacher_dashboard_summary_route(
+    request: Request,
+    class_id: int | None = Query(None),
+    db: Session = Depends(get_db),
+    current_user: Accounts = Depends(get_current_user)
+):
+    return get_teacher_dashboard_summary(
+        request=request,
+        class_id=class_id,
+        db=db,
+        current_user=current_user
+    )
+
+
+@router.get("/recent-activities", response_model=list[RecentActivityOut])
+@limiter.limit("20/minute")
+def list_recent_activities_route(
+    request: Request,
+    limit: int = Query(10, ge=1, le=50),
+    db: Session = Depends(get_db),
+    current_user: Accounts = Depends(get_current_user)
+):
+    return list_recent_activities(
+        request=request,
+        limit=limit,
+        db=db,
+        current_user=current_user
+    )
 
 
 @router.get("/", response_model=list[TeacherClassOut])
@@ -79,22 +112,22 @@ def list_class_students_route(
     )
 
 
-@router.patch("/{class_id}", response_model=TeacherClassOut)
-@limiter.limit("10/minute")
-def update_teacher_class_route(
-    request: Request,
-    class_id: int,
-    update: TeacherClassUpdate,
-    db: Session = Depends(get_db),
-    current_user: Accounts = Depends(get_current_user)
-):
-    return update_teacher_class(
-        request=request,
-        class_id=class_id,
-        update=update,
-        db=db,
-        current_user=current_user
-    )
+# @router.patch("/{class_id}", response_model=TeacherClassOut)
+# @limiter.limit("10/minute")
+# def update_teacher_class_route(
+#     request: Request,
+#     class_id: int,
+#     update: TeacherClassUpdate,
+#     db: Session = Depends(get_db),
+#     current_user: Accounts = Depends(get_current_user)
+# ):
+#     return update_teacher_class(
+#         request=request,
+#         class_id=class_id,
+#         update=update,
+#         db=db,
+#         current_user=current_user
+#     )
 
 
 @router.delete("/{class_id}")

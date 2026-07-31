@@ -35,7 +35,10 @@ from models.learning_topic import LearningTopic
 from models.student_progress import StudentTopicProgress
 from models.student_quiz_progress import StudentQuizProgress
 from models.email_otp import EmailOTP
+from models.grade_levels import GradeLevels
+from models.HI_sections import HI_SECTIONS
 target_metadata = Base.metadata
+
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:
@@ -55,7 +58,7 @@ def run_migrations_offline() -> None:
     script output.
 
     """
-    url = settings.database_url
+    url = config.get_main_option("sqlalchemy.url")
     context.configure(
         url=url,
         target_metadata=target_metadata,

@@ -14,4 +14,6 @@ def to_prediction_response(result: PredictionResult) -> PredictionResponse:
         ],
         frame_width=result.width,
         frame_height=result.height,
+        prediction_source=result.prediction_source,
+        calibration_status=result.calibration_status,
     )

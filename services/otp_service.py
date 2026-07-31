@@ -25,7 +25,8 @@ async def request_teacher_otp(request:Request,db: Session, email: str):
         db.commit()
 
     if pending_otp:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Please wait, there's still pending email, wait for otp expiration.") 
+        db.delete(pending_otp)
+        db.commit()
 
     if existing_account:
         if existing_account.verification_status == VerificationStatus.pending:
@@ -57,17 +58,28 @@ async def request_teacher_otp(request:Request,db: Session, email: str):
     db.commit()
     db.refresh(otp_record)
 
+    email_error = None
     try:
         await EmailService.send_teacher_otp_email(email=email, otp=otp)
     except Exception as e:
+        email_error = str(e)
         import sys
         print(f"\n=======================================================", file=sys.stderr)
         print(f"[REGISTRATION FALLBACK] COULD NOT SEND EMAIL: {e}", file=sys.stderr)
         print(f"TEACHER OTP FOR {email} IS: {otp}", file=sys.stderr)
         print(f"=======================================================\n", file=sys.stderr)
 
+    if email_error:
+        return {
+            "message": "Email delivery failed. Use the development OTP shown below.",
+            "delivery": "failed",
+            "debug_otp": otp,
+            "detail": email_error,
+        }
+
     return {
-        "message": "OTP sent successfully"
+        "message": "OTP sent successfully",
+        "delivery": "sent",
     }
 
 def verify_teacher_otp(db:Session, email:str, otp:str):

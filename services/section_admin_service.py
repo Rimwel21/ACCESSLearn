@@ -2,7 +2,7 @@ from sqlalchemy.orm import Session
 from fastapi import HTTPException, status, Request
 from models.section import Section
 from models.accounts import Accounts
-from models.grade_level import GradeLevel
+from models.grade_levels import GradeLevels
 from models.school_year import SchoolYear
 from models.teacher_assignment_history import TeacherAssignmentHistory
 from models.student_profile import StudentProfile
@@ -21,12 +21,12 @@ from typing import List, Tuple, Optional
 class SectionAdminService:
     # ─── Grade Level CRUD ──────────────────────────────────────────────────────────
     @staticmethod
-    def create_grade_level(db: Session, data: GradeLevelCreate, admin: Accounts, request: Request) -> GradeLevel:
-        existing = db.query(GradeLevel).filter(GradeLevel.name == data.name).first()
+    def create_grade_level(db: Session, data: GradeLevelCreate, admin: Accounts, request: Request) -> GradeLevels:
+        existing = db.query(GradeLevels).filter(GradeLevels.name == data.name).first()
         if existing:
             raise HTTPException(status_code=400, detail="Grade level already exists")
         
-        grade = GradeLevel(name=data.name, status=SectionStatusEnum.active)
+        grade = GradeLevels(name=data.name, status=SectionStatusEnum.active)
         db.add(grade)
         db.commit()
         db.refresh(grade)
@@ -39,13 +39,13 @@ class SectionAdminService:
         return grade
 
     @staticmethod
-    def update_grade_level(db: Session, grade_id: int, data: GradeLevelUpdate, admin: Accounts, request: Request) -> GradeLevel:
-        grade = db.query(GradeLevel).filter(GradeLevel.id == grade_id).first()
+    def update_grade_level(db: Session, grade_id: int, data: GradeLevelUpdate, admin: Accounts, request: Request) -> GradeLevels:
+        grade = db.query(GradeLevels).filter(GradeLevels.id == grade_id).first()
         if not grade:
             raise HTTPException(status_code=404, detail="Grade level not found")
         
         if data.name is not None and data.name != grade.name:
-            existing = db.query(GradeLevel).filter(GradeLevel.name == data.name).first()
+            existing = db.query(GradeLevels).filter(GradeLevels.name == data.name).first()
             if existing:
                 raise HTTPException(status_code=400, detail="Grade level name already exists")
             grade.name = data.name
@@ -64,8 +64,8 @@ class SectionAdminService:
         return grade
 
     @staticmethod
-    def archive_grade_level(db: Session, grade_id: int, admin: Accounts, request: Request) -> GradeLevel:
-        grade = db.query(GradeLevel).filter(GradeLevel.id == grade_id).first()
+    def archive_grade_level(db: Session, grade_id: int, admin: Accounts, request: Request) -> GradeLevels:
+        grade = db.query(GradeLevels).filter(GradeLevels.id == grade_id).first()
         if not grade:
             raise HTTPException(status_code=404, detail="Grade level not found")
         
@@ -81,8 +81,8 @@ class SectionAdminService:
         return grade
 
     @staticmethod
-    def restore_grade_level(db: Session, grade_id: int, admin: Accounts, request: Request) -> GradeLevel:
-        grade = db.query(GradeLevel).filter(GradeLevel.id == grade_id).first()
+    def restore_grade_level(db: Session, grade_id: int, admin: Accounts, request: Request) -> GradeLevels:
+        grade = db.query(GradeLevels).filter(GradeLevels.id == grade_id).first()
         if not grade:
             raise HTTPException(status_code=404, detail="Grade level not found")
         
@@ -181,7 +181,7 @@ class SectionAdminService:
         if existing:
             raise HTTPException(status_code=400, detail="Section already exists in this Grade Level and School Year.")
 
-        grade = db.query(GradeLevel).filter(GradeLevel.id == data.grade_level_id).first()
+        grade = db.query(GradeLevels).filter(GradeLevels.id == data.grade_level_id).first()
         if not grade:
             raise HTTPException(status_code=400, detail="Invalid Grade Level ID")
 

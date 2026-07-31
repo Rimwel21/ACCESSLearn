@@ -1,11 +1,12 @@
 from fastapi import Request, HTTPException, status, Response
 from sqlalchemy.orm import Session
-from utils.enum import RoleEnum, VerificationStatus, AccountStatusEnum
+from utils.enum import RoleEnum, VerificationStatus, AccountStatusEnum, StudentType
 from models.accounts import Accounts
 from schemas.accounts_schema import AccountRegister, AccountLogin
 from models.student_profile import StudentProfile
 from models.teacher_profile import TeacherProfile
 from auth.account_auth import hash_password, verify_password, create_access_token, create_refresh_token
+from services.academic_service import get_grade_level_or_404, get_section_for_grade_or_400
 
 from models.email_otp import EmailOTP
 from utils.utc_now import utc_now
@@ -14,8 +15,28 @@ def user_registration(request: Request, user: AccountRegister, db: Session):
     if user.role == RoleEnum.student:
         if not user.username:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username is required for student accounts")
+        if not user.full_name:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Full name is required for student accounts")
+        if not user.student_lrn:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Student LRN is required")
+        if user.grade_level_id is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Grade level is required")
+        if user.section_id is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Section is required")
+        if not user.accessibility_profile:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Accessibility profile is required")
         
-        existing = db.query(Accounts).filter(Accounts.username == user.username).first()
+        if db.query(Accounts).filter(Accounts.username == user.username).first():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username already exists")
+        if user.email and db.query(Accounts).filter(Accounts.email == user.email).first():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already exists")
+        if db.query(StudentProfile).filter(StudentProfile.student_lrn == user.student_lrn).first():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Student LRN already exists")
+
+
+        get_grade_level_or_404(user.grade_level_id, db)
+        get_section_for_grade_or_400(user.section_id, user.grade_level_id, db)
+        existing = None
         
     elif user.role == RoleEnum.teacher:
         if not user.email:
@@ -39,7 +60,7 @@ def user_registration(request: Request, user: AccountRegister, db: Session):
     
     new_account = Accounts(
         username=user.username if user.role == RoleEnum.student else None,
-        email=user.email if user.role == RoleEnum.teacher else None,
+        email=user.email,
         hashed_password=hash_password(user.password),
         role=user.role,
         verification_status=VerificationStatus.pending if user.role == RoleEnum.teacher else VerificationStatus.verified,
@@ -47,7 +68,58 @@ def user_registration(request: Request, user: AccountRegister, db: Session):
     )
 
     db.add(new_account)
+    db.flush()
+
+    if user.role == RoleEnum.student:
+        student_profile = StudentProfile(
+            name=user.full_name,
+            student_lrn=user.student_lrn,
+            grade_level_id=user.grade_level_id,
+            section_id=user.section_id,
+            account_id=new_account.id,
+            profile_image_id=None,
+            student_type=StudentType.HI if user.accessibility_profile == "Hearing Impaired Student" else StudentType.regular,
+            accessibility_profile=user.accessibility_profile,
+            learning_preferences=None,
+            guardians_name=user.guardians_name,
+            guardians_contact_no=user.guardians_contact_no,
+        )
+        db.add(student_profile)
+        db.flush()
+
+        if user.profile_image:
+            try:
+                import base64
+                import cloudinary.uploader
+                from models.file_upload import FileUpload
+                from utils.enum import FileCategory
+
+                header, base64_str = user.profile_image.split(",", 1) if "," in user.profile_image else ("", user.profile_image)
+                file_type = "image/png"
+                if "image/jpeg" in header:
+                    file_type = "image/jpeg"
+                elif "image/webp" in header:
+                    file_type = "image/webp"
+
+                file_bytes = base64.b64decode(base64_str)
+                uploaded = cloudinary.uploader.upload(file_bytes, folder="student_profiles")
+                new_file = FileUpload(
+                    filename="profile_image.png",
+                    file_type=file_type,
+                    file_url=uploaded["secure_url"],
+                    public_id=uploaded["public_id"],
+                    file_category=FileCategory.PROFILE_IMAGE,
+                    owner_id=new_account.id
+                )
+                db.add(new_file)
+                db.flush()
+                student_profile.profile_image_id = new_file.id
+            except Exception as e:
+                # If upload fails, proceed without setting profile_image_id to prevent transaction rollback
+                pass
+
     db.commit()
+
     db.refresh(new_account)
 
     return new_account
@@ -65,15 +137,32 @@ def user_login(request: Request, user: AccountLogin, response: Response, db: Ses
             detail="Use only username or email"
         )
 
-    if user.username:
-        db_account = db.query(Accounts).filter(Accounts.username == user.username).first()
+    if user.email:
+        query = db.query(Accounts).filter(Accounts.email == user.email)
+        if user.role:
+            query = query.filter(Accounts.role == user.role)
+        db_account = query.first()
+
+        if not db_account and user.role:
+            other_account = db.query(Accounts).filter(Accounts.email == user.email).first()
+            if other_account:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"This email belongs to a {other_account.role.value} account. Please use the {other_account.role.value} login.",
+                )
     else:
-        db_account = db.query(Accounts).filter(Accounts.email == user.email).first()
+        query = db.query(Accounts).filter(Accounts.username == user.username)
+        if user.role:
+            query = query.filter(Accounts.role == user.role)
+        db_account = query.first()
 
     if not db_account:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
     
     if db_account.verification_status == VerificationStatus.pending:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Wait for admin approval")
+
+    if db_account.role == RoleEnum.teacher and db_account.account_status == AccountStatusEnum.pending_activation:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Wait for admin approval")
     
     if db_account.verification_status == VerificationStatus.blocked:

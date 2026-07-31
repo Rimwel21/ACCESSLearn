@@ -29,12 +29,15 @@ def _joint_angle(a, b, c):
     return float(np.clip(cosine, -1.0, 1.0))
 
 
-def landmarks_to_feature_vector(landmarks):
+def landmarks_to_feature_vector(landmarks, mirror_x=False):
     points = np.asarray([_point_xyz(point) for point in landmarks], dtype=np.float32)
     if points.shape != (EXPECTED_LANDMARKS, 3):
         raise ValueError(f"Expected 21 hand landmarks, got shape {points.shape}")
 
     centered = points - points[0]
+    if mirror_x:
+        centered[:, 0] *= -1.0
+
     scale = float(np.max(np.linalg.norm(centered[1:], axis=1)))
     if scale < 1e-6:
         scale = 1.0

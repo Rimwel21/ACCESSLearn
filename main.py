@@ -4,17 +4,22 @@ from fastapi.staticfiles import StaticFiles
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from fastapi.middleware.cors import CORSMiddleware
+import models  # noqa: F401 - register SQLAlchemy relationship targets before routes query
 from routes.accounts_route import router as account_auth
 from routes.refresh_token import router as refresh_router
+from routes.academic_route import router as academic_router
 from routes.profile_route import router as account_profile
 from routes.teacher_class_route import router as teacher_classes
 from routes.teacher_module_route import router as teacher_modules
 from routes.teacher_assessment_route import router as teacher_assessments
 from routes.student_module_route import activities_router as student_activities
+from routes.student_module_route import deadlines_router as student_deadlines
 from routes.student_module_route import router as student_modules
 from routes.handsign_route import router as handsign_router
+from routes.admin_create_section_route import router as section_create
 from core.handsign_config import get_handsign_settings
 from services.handsign.prediction_service import PredictionService
+from services.schema_maintenance import ensure_academic_tables
 from routes.otp_route import router as otp_router
 from routes.admin_approval_route import router as admin_approval
 from limiter import limiter
@@ -77,7 +82,18 @@ async def http_exception_with_cors(request: Request, exc: HTTPException):
         response.headers[key] = value
     return response
 
+@app.exception_handler(Exception)
+async def unhandled_exception_with_cors(request: Request, exc: Exception):
+    response = JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"}
+    )
+    for key, value in cors_headers(request).items():
+        response.headers[key] = value
+    return response
+
 app.include_router(account_auth)
+app.include_router(academic_router)
 app.include_router(account_profile)
 app.include_router(refresh_router)
 app.include_router(teacher_classes)
@@ -85,10 +101,16 @@ app.include_router(teacher_modules)
 app.include_router(teacher_assessments)
 app.include_router(student_modules)
 app.include_router(student_activities)
+app.include_router(student_deadlines)
 app.include_router(handsign_router)
 app.include_router(otp_router)
 app.include_router(admin_approval)
+app.include_router(section_create)
 
+
+@app.on_event("startup")
+def ensure_database_schema():
+    ensure_academic_tables()
 
 @app.on_event("startup")
 def load_handsign_model():

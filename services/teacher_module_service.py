@@ -1,4 +1,5 @@
 from pathlib import Path
+from datetime import datetime
 import re
 import shutil
 import zipfile
@@ -12,6 +13,7 @@ from models.teacher_class import TeacherClass
 from models.teacher_module import TeacherModule
 from schemas.teacher_module_schema import TeacherModuleCreate, TeacherModuleUpdate
 from utils.enum import RoleEnum
+from utils.options import ALLOWED_LEARNING_WEEKS, ALLOWED_MODULE_CONTENT_TYPES
 
 ALLOWED_MATERIAL_EXTENSIONS = {".pdf", ".ppt", ".pptx", ".doc", ".docx"}
 ALLOWED_MATERIAL_TYPES = {
@@ -24,6 +26,9 @@ ALLOWED_MATERIAL_TYPES = {
 UPLOAD_DIR = Path("uploads/learning_materials")
 MATERIAL_IMAGE_DIR = Path("static/material_images")
 PDF_PAGE_DIR = Path("static/pdf_pages")
+PDF_MIN_TOPIC_PAGES = 2
+PDF_TARGET_TOPIC_PAGES = 3
+PDF_MAX_TOPIC_PAGES = 5
 
 
 def _ensure_teacher(current_user: Accounts):
@@ -49,6 +54,22 @@ def _validate_class_assignment(class_id: int | None, status_value: str):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Published materials must be assigned to a class")
 
 
+def _validate_content_type(content_type: str | None):
+    if content_type not in ALLOWED_MODULE_CONTENT_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Content type must be one of: {', '.join(ALLOWED_MODULE_CONTENT_TYPES)}",
+        )
+
+
+def _validate_week(week: str | None):
+    if week is not None and week not in ALLOWED_LEARNING_WEEKS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Week must be one of: {', '.join(ALLOWED_LEARNING_WEEKS)}",
+        )
+
+
 def list_teacher_modules(request: Request, db: Session, current_user: Accounts):
     _ensure_teacher(current_user)
 
@@ -64,6 +85,8 @@ def create_teacher_module(request: Request, module: TeacherModuleCreate, db: Ses
     _ensure_teacher(current_user)
     _validate_class_assignment(module.class_id, module.status)
     _validate_class_owner(module.class_id, db, current_user)
+    _validate_content_type(module.content_type)
+    _validate_week(module.week)
 
     new_module = TeacherModule(
         teacher_id=current_user.id,
@@ -76,7 +99,7 @@ def create_teacher_module(request: Request, module: TeacherModuleCreate, db: Ses
         file_type=module.file_type.strip() if module.file_type else None,
         status=module.status,
         behavior_required=str(module.behavior_required).lower(),
-        estimated_time=module.estimated_time.strip() if module.estimated_time else None,
+        due_at=module.due_at,
     )
 
     db.add(new_module)
@@ -96,8 +119,8 @@ async def create_teacher_module_upload(
     week: str,
     status_value: str,
     behavior_required: bool,
-    estimated_time: str | None,
     class_id: int | None,
+    due_at: datetime | None,
     material_file: UploadFile,
     db: Session,
     current_user: Accounts
@@ -105,7 +128,9 @@ async def create_teacher_module_upload(
     _ensure_teacher(current_user)
     _validate_class_assignment(class_id, status_value)
     _validate_class_owner(class_id, db, current_user)
-    _validate_material_file(material_file)
+    _validate_content_type(content_type)
+    _validate_week(week)
+    _validate_material_file(material_file, content_type)
     saved_path, file_size = _save_material_file(material_file)
 
     new_module = TeacherModule(
@@ -121,7 +146,7 @@ async def create_teacher_module_upload(
         file_size=file_size,
         status=status_value,
         behavior_required=str(behavior_required).lower(),
-        estimated_time=estimated_time.strip() if estimated_time else None,
+        due_at=due_at,
     )
 
     db.add(new_module)
@@ -165,6 +190,10 @@ def update_teacher_module(request: Request, module_id: int, update: TeacherModul
     next_class_id = update_data.get("class_id", module.class_id)
     next_status = update_data.get("status", module.status)
     _validate_class_assignment(next_class_id, next_status)
+    if "content_type" in update_data:
+        _validate_content_type(update_data.get("content_type"))
+    if "week" in update_data:
+        _validate_week(update_data.get("week"))
 
     if "class_id" in update_data:
         _validate_class_owner(update.class_id, db, current_user)
@@ -199,7 +228,7 @@ def delete_teacher_module(request: Request, module_id: int, db: Session, current
 
 async def replace_teacher_module_file(request: Request, module_id: int, material_file: UploadFile, db: Session, current_user: Accounts):
     module = get_teacher_module(request, module_id, db, current_user)
-    _validate_material_file(material_file)
+    _validate_material_file(material_file, module.content_type)
 
     old_path = Path(module.file_path) if module.file_path else None
     saved_path, file_size = _save_material_file(material_file)
@@ -233,9 +262,21 @@ def download_teacher_module_file(request: Request, module_id: int, db: Session, 
     return FileResponse(path, media_type=module.file_type or "application/octet-stream", filename=module.file_name or path.name)
 
 
-def _validate_material_file(material_file: UploadFile):
+def _validate_material_file(material_file: UploadFile, expected_content_type: str | None = None):
     filename = material_file.filename or ""
     extension = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+
+    if expected_content_type == "PDF" and extension != ".pdf":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The selected content type accepts PDF files only."
+        )
+
+    if expected_content_type == "DOCX" and extension != ".docx":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The selected content type accepts DOCX files only."
+        )
 
     if extension not in ALLOWED_MATERIAL_EXTENSIONS:
         raise HTTPException(
@@ -360,17 +401,19 @@ def _extract_pdf_logical_topics(path: Path, module_title: str, module_descriptio
     if not boundaries:
         boundaries = _fallback_pdf_boundaries(page_infos)
 
+    topic_ranges = _balanced_pdf_topic_ranges(page_infos, boundaries, document.page_count)
+
     topics = []
-    for topic_number, boundary in enumerate(boundaries, start=1):
-        start = boundary["page_index"]
-        end = boundaries[topic_number]["page_index"] if topic_number < len(boundaries) else document.page_count
+    for topic_range in topic_ranges:
+        start = topic_range["start"]
+        end = topic_range["end"]
         pages = page_infos[start:end]
         content = "\n\n".join(page["text"] for page in pages if page["text"]).strip()
         if not content:
-            content = f"Open the uploaded PDF page group for {boundary['title']}."
+            content = f"Open the uploaded PDF page group for {topic_range['title']}."
         topics.append({
-            "title": boundary["title"],
-            "description": _summarize_topic(boundary["title"], content),
+            "title": topic_range["title"],
+            "description": _summarize_topic(topic_range["title"], content),
             "content": content,
             "image_url": None,
             "page_image_urls": _render_pdf_topic_pages(document, start, end),
@@ -439,6 +482,94 @@ def _detect_pdf_topic_boundaries(page_infos: list[dict]):
     return boundaries
 
 
+def _balanced_pdf_topic_ranges(page_infos: list[dict], boundaries: list[dict], page_count: int):
+    ranges = _pdf_ranges_from_boundaries(boundaries, page_infos, page_count)
+    ranges = _merge_short_pdf_ranges(ranges)
+    return _split_long_pdf_ranges(ranges)
+
+
+def _pdf_ranges_from_boundaries(boundaries: list[dict], page_infos: list[dict], page_count: int):
+    if not boundaries:
+        return []
+
+    ranges = []
+    sorted_boundaries = sorted(boundaries, key=lambda item: item["page_index"])
+    for index, boundary in enumerate(sorted_boundaries):
+        start = boundary["page_index"]
+        end = sorted_boundaries[index + 1]["page_index"] if index + 1 < len(sorted_boundaries) else page_count
+        if end <= start:
+            continue
+        ranges.append({
+            "start": start,
+            "end": end,
+            "title": boundary["title"],
+        })
+
+    if ranges and ranges[0]["start"] > 0:
+        first_content_page = _first_content_page_index(page_infos)
+        if first_content_page < ranges[0]["start"]:
+            ranges.insert(0, {
+                "start": first_content_page,
+                "end": ranges[0]["start"],
+                "title": _first_clean_line(page_infos[first_content_page]["text"]) or "Introduction",
+            })
+
+    return ranges
+
+
+def _merge_short_pdf_ranges(ranges: list[dict]):
+    merged = []
+    index = 0
+    while index < len(ranges):
+        current = dict(ranges[index])
+        current_pages = current["end"] - current["start"]
+        if current_pages < PDF_MIN_TOPIC_PAGES and index + 1 < len(ranges):
+            next_range = ranges[index + 1]
+            combined_pages = next_range["end"] - current["start"]
+            if combined_pages <= PDF_MAX_TOPIC_PAGES:
+                current["end"] = next_range["end"]
+                index += 1
+        elif current_pages < PDF_MIN_TOPIC_PAGES and merged:
+            previous = merged[-1]
+            combined_pages = current["end"] - previous["start"]
+            if combined_pages <= PDF_MAX_TOPIC_PAGES:
+                previous["end"] = current["end"]
+                index += 1
+                continue
+        merged.append(current)
+        index += 1
+    return merged
+
+
+def _split_long_pdf_ranges(ranges: list[dict]):
+    balanced = []
+    for item in ranges:
+        page_total = item["end"] - item["start"]
+        if page_total <= PDF_MAX_TOPIC_PAGES:
+            balanced.append(item)
+            continue
+
+        part = 1
+        start = item["start"]
+        while start < item["end"]:
+            remaining = item["end"] - start
+            chunk_size = PDF_TARGET_TOPIC_PAGES
+            if remaining <= PDF_MAX_TOPIC_PAGES:
+                chunk_size = remaining
+            elif remaining - chunk_size < PDF_MIN_TOPIC_PAGES:
+                chunk_size = remaining - PDF_MIN_TOPIC_PAGES
+
+            end = min(start + chunk_size, item["end"])
+            balanced.append({
+                "start": start,
+                "end": end,
+                "title": item["title"] if part == 1 else f"{item['title']} (Part {part})",
+            })
+            start = end
+            part += 1
+    return balanced
+
+
 def _best_heading_for_page(page: dict):
     candidates = []
     for line in page["lines"][:18]:
@@ -492,13 +623,20 @@ def _fallback_pdf_boundaries(page_infos: list[dict]):
     content_pages = [page for page in page_infos if not _is_front_matter_page(page["text"])]
     if not content_pages:
         content_pages = page_infos
-    chunk_size = 4
+    chunk_size = PDF_TARGET_TOPIC_PAGES
     boundaries = []
     for index in range(0, len(content_pages), chunk_size):
         page = content_pages[index]
         title = _first_clean_line(page["text"]) or f"Topic {len(boundaries) + 1}"
         boundaries.append({"page_index": page["page_index"], "title": title[:120]})
     return boundaries
+
+
+def _first_content_page_index(page_infos: list[dict]):
+    for page in page_infos:
+        if not _is_front_matter_page(page["text"]):
+            return page["page_index"]
+    return page_infos[0]["page_index"] if page_infos else 0
 
 
 def _is_front_matter_page(text: str):
@@ -578,7 +716,7 @@ def _extract_pdf_text(path: Path):
         from pypdf import PdfReader
     except ImportError:
         try:
-            from PyPDF2 import PdfReader
+            from pypdf import PdfReader
         except ImportError:
             return ""
 

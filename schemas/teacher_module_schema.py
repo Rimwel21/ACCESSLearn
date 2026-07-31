@@ -1,6 +1,7 @@
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from schemas.teacher_assessment_schema import TeacherAssessmentOut
+from utils.options import ALLOWED_LEARNING_WEEKS, ALLOWED_MODULE_CONTENT_TYPES
 
 
 class TeacherModuleBase(BaseModel):
@@ -13,12 +14,24 @@ class TeacherModuleBase(BaseModel):
     file_size: int | None = None
     status: str = Field(default="Unpublished", pattern="^(Published|Unpublished)$")
     behavior_required: bool = True
-    estimated_time: str | None = Field(default=None, max_length=30)
     class_id: int | None = None
+    due_at: datetime | None = None
 
 
 class TeacherModuleCreate(TeacherModuleBase):
-    pass
+    @field_validator("content_type")
+    @classmethod
+    def validate_content_type(cls, value: str | None):
+        if value is not None and value not in ALLOWED_MODULE_CONTENT_TYPES:
+            raise ValueError(f"Content type must be one of: {', '.join(ALLOWED_MODULE_CONTENT_TYPES)}")
+        return value
+
+    @field_validator("week")
+    @classmethod
+    def validate_week(cls, value: str | None):
+        if value is not None and value not in ALLOWED_LEARNING_WEEKS:
+            raise ValueError(f"Week must be one of: {', '.join(ALLOWED_LEARNING_WEEKS)}")
+        return value
 
 
 class TeacherModuleUpdate(BaseModel):
@@ -31,8 +44,22 @@ class TeacherModuleUpdate(BaseModel):
     file_size: int | None = None
     status: str | None = Field(default=None, pattern="^(Published|Unpublished)$")
     behavior_required: bool | None = None
-    estimated_time: str | None = Field(default=None, max_length=30)
     class_id: int | None = None
+    due_at: datetime | None = None
+
+    @field_validator("content_type")
+    @classmethod
+    def validate_content_type(cls, value: str | None):
+        if value is not None and value not in ALLOWED_MODULE_CONTENT_TYPES:
+            raise ValueError(f"Content type must be one of: {', '.join(ALLOWED_MODULE_CONTENT_TYPES)}")
+        return value
+
+    @field_validator("week")
+    @classmethod
+    def validate_week(cls, value: str | None):
+        if value is not None and value not in ALLOWED_LEARNING_WEEKS:
+            raise ValueError(f"Week must be one of: {', '.join(ALLOWED_LEARNING_WEEKS)}")
+        return value
 
 
 class TeacherModuleOut(TeacherModuleBase):
@@ -72,3 +99,12 @@ class StudentProgressOut(BaseModel):
     total_quizzes: int = 0
     completed_quizzes: int = 0
     percent: int
+
+
+class StudentDeadlineOut(BaseModel):
+    id: str
+    title: str
+    item_type: str
+    due_at: datetime
+    module_id: int | None = None
+    assessment_id: int | None = None
