@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#ffffff"/>
+  <rect x="36" y="36" width="1208" height="648" rx="16" fill="#f4fbfa" stroke="#0f766e" stroke-width="6"/>
+  <text x="78" y="104" font-size="24" font-family="Arial, sans-serif" font-weight="700" fill="#0f766e">Slide 19</text>
+  <text x="78" y="156" font-size="42" font-family="Arial, sans-serif" font-weight="800" fill="#102a2a">Instruction: Read and answer the following. Write the answers in your journal.</text>
+  <g font-family="Arial, sans-serif"><text x="78" y="206" font-size="28" fill="#263238">1. What are the different forms of mixtures?</text>
+<text x="78" y="244" font-size="28" fill="#263238">2.Jelly, mixed the two mixtures like coffee, sugar, and water. Is it</text>
+<text x="78" y="282" font-size="28" fill="#263238">Heterogeneous or Homogeneous? Why?</text>
+<text x="78" y="320" font-size="28" fill="#263238">3. Shiela, combined the different vegetables to make a salad. Is it</text>
+<text x="78" y="358" font-size="28" fill="#263238">Heterogeneous of Homogeneous? Why?</text></g>
+</svg>
