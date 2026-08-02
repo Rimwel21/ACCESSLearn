@@ -10,7 +10,7 @@ from models.student_profile import StudentProfile
 from models.teacher_assessment import TeacherAssessment
 from models.teacher_class import TeacherClass
 from models.teacher_module import TeacherModule
-from services.teacher_module_service import _extract_pdf_logical_topics, _needs_pdf_topic_regeneration, _replace_topic_records
+from services.teacher_module_service import _needs_material_topic_regeneration, _process_material_topics
 from utils.enum import RoleEnum
 from utils.utc_now import utc_now
 
@@ -696,8 +696,8 @@ def _string_to_bool(value):
 def _ensure_topics(db: Session, modules: list[TeacherModule]):
     changed = False
     for module in modules:
-        if _needs_pdf_topic_regeneration(module):
-            _replace_topic_records(db, module, _extract_pdf_logical_topics(Path(module.file_path), module.title, module.description))
+        if _needs_material_topic_regeneration(module):
+            _process_material_topics(db, module, Path(module.file_path))
             continue
         if module.topics:
             continue

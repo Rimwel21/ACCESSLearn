@@ -1,7 +1,11 @@
 from fastapi import APIRouter, Depends, Response, Request
 from sqlalchemy.orm import Session
-from utils.dependencies import get_db
-from schemas.accounts_schema import AccountRegister, AccountLogin, AccountResponse,TokenResponse
+from utils.dependencies import get_current_user, get_db
+from schemas.accounts_schema import AccountRegister, AccountLogin, AccountResponse, CurrentUserResponse, TokenResponse
+from models.accounts import Accounts
+from models.student_profile import StudentProfile
+from models.teacher_profile import TeacherProfile
+from utils.enum import RoleEnum
 from limiter import limiter
 
 from services.auth_service import user_registration, user_login
@@ -32,3 +36,25 @@ def account_login(request:Request, user: AccountLogin, response: Response, db: S
     )
 
     return Access_permission
+
+@router.get("/me", response_model=CurrentUserResponse)
+@limiter.limit("20/minute")
+def current_account(request: Request, current_user: Accounts = Depends(get_current_user), db: Session = Depends(get_db)):
+    profile_completed = True
+
+    if current_user.role == RoleEnum.student:
+        profile_completed = db.query(StudentProfile.id).filter(StudentProfile.account_id == current_user.id).first() is not None
+    elif current_user.role == RoleEnum.teacher:
+        profile_completed = db.query(TeacherProfile.id).filter(TeacherProfile.account_id == current_user.id).first() is not None
+
+    return {
+        "id": current_user.id,
+        "username": current_user.username,
+        "email": current_user.email,
+        "role": current_user.role,
+        "profile_completed": profile_completed,
+        "account_status": enum_value(current_user.account_status),
+    }
+
+def enum_value(value):
+    return getattr(value, "value", value)

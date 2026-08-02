@@ -2,6 +2,7 @@ from pathlib import Path
 from datetime import datetime
 import re
 import shutil
+import subprocess
 import zipfile
 from uuid import uuid4
 from fastapi.responses import FileResponse
@@ -16,6 +17,16 @@ from utils.enum import RoleEnum
 from utils.options import ALLOWED_LEARNING_WEEKS, ALLOWED_MODULE_CONTENT_TYPES
 
 ALLOWED_MATERIAL_EXTENSIONS = {".pdf", ".ppt", ".pptx", ".doc", ".docx"}
+CONTENT_TYPE_EXTENSIONS = {
+    "PDF": {".pdf"},
+    "PPT": {".ppt", ".pptx"},
+    "DOCX": {".docx"},
+}
+CONTENT_TYPE_LABELS = {
+    "PDF": "PDF",
+    "PPT": "PowerPoint",
+    "DOCX": "DOCX",
+}
 ALLOWED_MATERIAL_TYPES = {
     "application/pdf",
     "application/msword",
@@ -26,9 +37,11 @@ ALLOWED_MATERIAL_TYPES = {
 UPLOAD_DIR = Path("uploads/learning_materials")
 MATERIAL_IMAGE_DIR = Path("static/material_images")
 PDF_PAGE_DIR = Path("static/pdf_pages")
+PRESENTATION_PDF_DIR = Path("static/presentation_pdfs")
 PDF_MIN_TOPIC_PAGES = 2
 PDF_TARGET_TOPIC_PAGES = 3
 PDF_MAX_TOPIC_PAGES = 5
+POWERPOINT_SLIDES_PER_TOPIC = 5
 
 
 def _ensure_teacher(current_user: Accounts):
@@ -152,12 +165,14 @@ async def create_teacher_module_upload(
     db.add(new_module)
     db.commit()
     db.refresh(new_module)
-    if saved_path.suffix.lower() == ".pdf":
-        _replace_topic_records(db, new_module, _extract_pdf_logical_topics(saved_path, new_module.title, new_module.description))
-    else:
-        extracted_text = _extract_material_text(saved_path, new_module.title, new_module.description)
-        image_urls = _extract_material_images(saved_path)
-        _replace_generated_topics(db, new_module, extracted_text, image_urls)
+    try:
+        _process_material_topics(db, new_module, saved_path)
+    except Exception:
+        db.delete(new_module)
+        db.commit()
+        if saved_path.exists():
+            saved_path.unlink()
+        raise
     db.refresh(new_module)
 
     return new_module
@@ -174,11 +189,11 @@ def get_teacher_module(request: Request, module_id: int, db: Session, current_us
     if not module:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Module not found")
 
-    if not module.topics:
-        _replace_generated_topics(db, module, _build_fallback_text(module.title, module.description, module.file_name), [])
+    if _needs_material_topic_regeneration(module):
+        _process_material_topics(db, module, Path(module.file_path))
         db.refresh(module)
-    elif _needs_pdf_topic_regeneration(module):
-        _replace_topic_records(db, module, _extract_pdf_logical_topics(Path(module.file_path), module.title, module.description))
+    elif not module.topics:
+        _replace_generated_topics(db, module, _build_fallback_text(module.title, module.description, module.file_name), [])
         db.refresh(module)
 
     return module
@@ -192,6 +207,7 @@ def update_teacher_module(request: Request, module_id: int, update: TeacherModul
     _validate_class_assignment(next_class_id, next_status)
     if "content_type" in update_data:
         _validate_content_type(update_data.get("content_type"))
+        _validate_existing_material_type(module, update_data.get("content_type"))
     if "week" in update_data:
         _validate_week(update_data.get("week"))
 
@@ -231,16 +247,27 @@ async def replace_teacher_module_file(request: Request, module_id: int, material
     _validate_material_file(material_file, module.content_type)
 
     old_path = Path(module.file_path) if module.file_path else None
+    old_file_name = module.file_name
+    old_file_type = module.file_type
+    old_file_path = module.file_path
+    old_file_size = module.file_size
     saved_path, file_size = _save_material_file(material_file)
     module.file_name = material_file.filename
     module.file_type = material_file.content_type
     module.file_path = str(saved_path)
     module.file_size = file_size
 
-    if saved_path.suffix.lower() == ".pdf":
-        _replace_topic_records(db, module, _extract_pdf_logical_topics(saved_path, module.title, module.description))
-    else:
-        _replace_generated_topics(db, module, _extract_material_text(saved_path, module.title, module.description), _extract_material_images(saved_path))
+    try:
+        _process_material_topics(db, module, saved_path)
+    except Exception:
+        db.rollback()
+        module.file_name = old_file_name
+        module.file_type = old_file_type
+        module.file_path = old_file_path
+        module.file_size = old_file_size
+        if saved_path.exists():
+            saved_path.unlink()
+        raise
     db.commit()
     db.refresh(module)
 
@@ -266,17 +293,7 @@ def _validate_material_file(material_file: UploadFile, expected_content_type: st
     filename = material_file.filename or ""
     extension = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
 
-    if expected_content_type == "PDF" and extension != ".pdf":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="The selected content type accepts PDF files only."
-        )
-
-    if expected_content_type == "DOCX" and extension != ".docx":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="The selected content type accepts DOCX files only."
-        )
+    _validate_extension_for_content_type(extension, expected_content_type)
 
     if extension not in ALLOWED_MATERIAL_EXTENSIONS:
         raise HTTPException(
@@ -289,6 +306,23 @@ def _validate_material_file(material_file: UploadFile, expected_content_type: st
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Unsupported file type. Upload PDF, PowerPoint, or Word files only."
         )
+
+
+def _validate_existing_material_type(module: TeacherModule, expected_content_type: str | None):
+    if not expected_content_type or not module.file_path:
+        return
+    _validate_extension_for_content_type(Path(module.file_path).suffix.lower(), expected_content_type)
+
+
+def _validate_extension_for_content_type(extension: str, expected_content_type: str | None):
+    allowed_extensions = CONTENT_TYPE_EXTENSIONS.get(expected_content_type or "")
+    if not allowed_extensions or extension in allowed_extensions:
+        return
+    label = CONTENT_TYPE_LABELS.get(expected_content_type or "", expected_content_type or "selected")
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=f"The selected content type accepts {label} files only."
+    )
 
 
 def _save_material_file(material_file: UploadFile):
@@ -307,6 +341,23 @@ def _save_material_file(material_file: UploadFile):
 
 def _replace_generated_topics(db: Session, module: TeacherModule, extracted_text: str, image_urls: list[str] | None = None):
     _replace_topic_records(db, module, _split_topics(module.title, module.description, extracted_text, image_urls or []))
+
+
+def _process_material_topics(db: Session, module: TeacherModule, path: Path):
+    if _is_pdf_path(path):
+        _replace_topic_records(db, module, _extract_pdf_logical_topics(path, module.title, module.description))
+        return
+
+    if _is_powerpoint_path(path):
+        _replace_topic_records(db, module, _extract_powerpoint_logical_topics(path, module.title, module.description))
+        return
+
+    _replace_generated_topics(
+        db,
+        module,
+        _extract_material_text(path, module.title, module.description),
+        _extract_material_images(path),
+    )
 
 
 def _replace_topic_records(db: Session, module: TeacherModule, topics: list[dict]):
@@ -328,9 +379,43 @@ def _replace_topic_records(db: Session, module: TeacherModule, topics: list[dict
     db.commit()
 
 
+def _is_pdf_path(path: Path):
+    return path.suffix.lower() == ".pdf"
+
+
+def _is_powerpoint_path(path: Path):
+    return path.suffix.lower() in {".ppt", ".pptx"}
+
+
 def _needs_pdf_topic_regeneration(module: TeacherModule):
-    if not module.file_path or Path(module.file_path).suffix.lower() != ".pdf":
+    if not module.file_path or not _is_pdf_path(Path(module.file_path)):
         return False
+    return _needs_page_image_topic_regeneration(module)
+
+
+def _needs_powerpoint_topic_regeneration(module: TeacherModule):
+    if not module.file_path or not _is_powerpoint_path(Path(module.file_path)):
+        return False
+    if not Path(module.file_path).exists():
+        return False
+    topics = module.topics or []
+    if not topics:
+        return True
+    image_counts = [len(topic.page_image_urls or []) for topic in topics]
+    if not any(image_counts):
+        return True
+    if any(count > POWERPOINT_SLIDES_PER_TOPIC for count in image_counts):
+        return True
+    if len(topics) > 1 and all(count <= 1 for count in image_counts):
+        return True
+    return False
+
+
+def _needs_material_topic_regeneration(module: TeacherModule):
+    return _needs_pdf_topic_regeneration(module) or _needs_powerpoint_topic_regeneration(module)
+
+
+def _needs_page_image_topic_regeneration(module: TeacherModule):
     if not Path(module.file_path).exists():
         return False
     if not module.topics:
@@ -672,6 +757,108 @@ def fitz_matrix():
         return fitz.Matrix(1.6, 1.6)
     except ImportError:
         return None
+
+
+def _extract_powerpoint_logical_topics(path: Path, module_title: str, module_description: str):
+    converted_pdf = _convert_powerpoint_to_pdf(path)
+    if converted_pdf:
+        topics = _extract_powerpoint_pdf_deck_topic(converted_pdf, module_title, module_description)
+        if topics:
+            return topics
+
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="PowerPoint rendering requires LibreOffice/soffice on the backend server. Install LibreOffice and make soffice available on PATH to preserve slide formatting.",
+    )
+
+
+def _convert_powerpoint_to_pdf(path: Path):
+    executable = _powerpoint_converter_executable()
+    if not executable:
+        return None
+
+    PRESENTATION_PDF_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        result = subprocess.run(
+            [
+                executable,
+                "--headless",
+                "--convert-to",
+                "pdf",
+                "--outdir",
+                str(PRESENTATION_PDF_DIR),
+                str(path),
+            ],
+            check=False,
+            capture_output=True,
+            timeout=90,
+        )
+    except Exception:
+        return None
+
+    candidate = PRESENTATION_PDF_DIR / f"{path.stem}.pdf"
+    if result.returncode == 0 and candidate.exists():
+        return candidate
+    return None
+
+
+def _powerpoint_converter_executable():
+    for name in ("soffice", "libreoffice"):
+        executable = shutil.which(name)
+        if executable:
+            return executable
+
+    common_paths = [
+        Path("C:/Program Files/LibreOffice/program/soffice.exe"),
+        Path("C:/Program Files (x86)/LibreOffice/program/soffice.exe"),
+    ]
+    for path in common_paths:
+        if path.exists():
+            return str(path)
+    return None
+
+
+def _extract_powerpoint_pdf_deck_topic(path: Path, module_title: str, module_description: str):
+    try:
+        import fitz
+    except ImportError:
+        return []
+
+    try:
+        document = fitz.open(str(path))
+    except Exception:
+        return []
+
+    page_image_urls = []
+    text_chunks = []
+    for page_index in range(document.page_count):
+        page = document.load_page(page_index)
+        content = page.get_text("text", sort=True).strip()
+        if content:
+            text_chunks.append(f"Slide {page_index + 1}\n{content}")
+        page_image_urls.extend(_render_pdf_topic_pages(document, page_index, page_index + 1))
+
+    document.close()
+    if not page_image_urls:
+        return []
+    return _build_powerpoint_slide_topics(module_title, module_description, text_chunks, page_image_urls)
+
+
+def _build_powerpoint_slide_topics(module_title: str, module_description: str, text_chunks: list[str], page_image_urls: list[str]):
+    topics = []
+    for start in range(0, len(page_image_urls), POWERPOINT_SLIDES_PER_TOPIC):
+        end = min(start + POWERPOINT_SLIDES_PER_TOPIC, len(page_image_urls))
+        topic_number = len(topics) + 1
+        range_text = f"Slides {start + 1} to {end}" if start + 1 != end else f"Slide {end}"
+        content = "\n\n".join(text_chunks[start:end]).strip()
+        topics.append({
+            "title": f"Topic {topic_number}: {range_text}",
+            "description": module_description or range_text,
+            "content": content or module_description or f"Open {range_text.lower()} from {module_title}.",
+            "image_url": None,
+            "page_image_urls": page_image_urls[start:end],
+        })
+    return topics
 
 
 def _summarize_topic(title: str, content: str):

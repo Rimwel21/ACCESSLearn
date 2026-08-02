@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#ffffff"/>
+  <rect x="36" y="36" width="1208" height="648" rx="16" fill="#f4fbfa" stroke="#0f766e" stroke-width="6"/>
+  <text x="78" y="104" font-size="24" font-family="Arial, sans-serif" font-weight="700" fill="#0f766e">Slide 31</text>
+  <text x="78" y="156" font-size="42" font-family="Arial, sans-serif" font-weight="800" fill="#102a2a">Types of Mixture</text>
+  <g font-family="Arial, sans-serif"><text x="78" y="206" font-size="28" fill="#263238">There are two types of mixtures. One is homogenous mixture which</text>
+<text x="78" y="244" font-size="28" fill="#263238">contains substances that are evenly mixed and is uniform throughout in</text>
+<text x="78" y="282" font-size="28" fill="#263238">terms of physical appearance. The other one is heterogeneous mixture</text>
+<text x="78" y="320" font-size="28" fill="#263238">which contains component substances that are usually easy to</text>
+<text x="78" y="358" font-size="28" fill="#263238">distinguish.</text></g>
+</svg>
