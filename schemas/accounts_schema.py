@@ -91,6 +91,14 @@ class TokenResponse(BaseModel):
     token_type: str
     profile_completed: bool
 
+class CurrentUserResponse(BaseModel):
+    id: int
+    username: str | None
+    email: EmailStr | None
+    role: RoleEnum
+    profile_completed: bool
+    account_status: str | None
+
 class AccountResponse(BaseModel):
     id: int
     username: str | None

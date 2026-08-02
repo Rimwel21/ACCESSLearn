@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#ffffff"/>
+  <rect x="36" y="36" width="1208" height="648" rx="16" fill="#f4fbfa" stroke="#0f766e" stroke-width="6"/>
+  <text x="78" y="104" font-size="24" font-family="Arial, sans-serif" font-weight="700" fill="#0f766e">Slide 38</text>
+  <text x="78" y="156" font-size="42" font-family="Arial, sans-serif" font-weight="800" fill="#102a2a">Let’s mix!</text>
+  <g font-family="Arial, sans-serif"><text x="78" y="206" font-size="28" fill="#263238">Mix a substance that will turn into heterogeneous mixture.</text>
+<text x="78" y="244" font-size="28" fill="#263238">1. ___ + ___ = ___</text>
+<text x="78" y="282" font-size="28" fill="#263238">2. ___+ ___ = ____</text>
+<text x="78" y="320" font-size="28" fill="#263238">3. ___+ ___ = ____</text>
+<text x="78" y="358" font-size="28" fill="#263238">4. ___+ ___ = ____</text>
+<text x="78" y="396" font-size="28" fill="#263238">5. ___+ ___ = ____</text></g>
+</svg>
