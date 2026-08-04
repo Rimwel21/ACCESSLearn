@@ -225,6 +225,19 @@ def _validate_assignment_values(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Activities are assigned directly to a class")
         return
 
+    if class_id is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Select a target class")
+
+    existing_class = db.query(TeacherClass.id).filter(
+        TeacherClass.id == class_id,
+        TeacherClass.teacher_id == current_user.id,
+    ).first()
+    if not existing_class:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Class not found")
+
+    if module_id is None and topic_id is None:
+        return
+
     _validate_module_topic(module_id, topic_id, db, current_user)
 
 
