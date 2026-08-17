@@ -18,7 +18,7 @@
     <div v-if="store.modulesLoading" class="empty-state">Loading learning materials...</div>
     <div v-else-if="filteredMaterials.length === 0" class="card p-12 text-center">
       <h2 class="font-display text-xl font-bold">No learning materials have been added yet.</h2>
-      <p class="mx-auto mt-2 max-w-md text-sm text-ink-soft">Add PDFs, PowerPoint decks, or Word documents for the selected module.</p>
+      <p class="mx-auto mt-2 max-w-md text-sm text-ink-soft">Add PDFs or Word documents for the selected module.</p>
       <button class="btn-primary mt-5" @click="openForm">Add Learning Material</button>
     </div>
     <div v-else class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -42,7 +42,7 @@
           <button class="figma-button" :disabled="!material.fileName" @click="downloadMaterial(material)">Download</button>
           <label class="figma-button cursor-pointer">
             Replace
-            <input class="sr-only" type="file" accept=".pdf,.ppt,.pptx,.doc,.docx" @change="event => replaceMaterialFile(material.id, event)" />
+            <input class="sr-only" type="file" accept=".pdf,.doc,.docx" @change="event => replaceMaterialFile(material.id, event)" />
           </label>
           <button class="figma-button border-red-300 text-red-700" @click="deleteMaterial(material.id)">Delete</button>
         </div>
@@ -85,7 +85,7 @@
 
               <section class="figma-panel flex min-h-72 items-center justify-center">
                 <label class="grid cursor-pointer place-items-center gap-3 text-center">
-                  <input class="sr-only" type="file" accept=".pdf,.ppt,.pptx,.doc,.docx" @change="onFileChange" />
+                  <input class="sr-only" type="file" accept=".pdf,.doc,.docx" @change="onFileChange" />
                   <span class="text-sm font-bold">Drag and drop your files here<br />or</span>
                   <span class="figma-button">Browse File</span>
                   <span v-if="fileName" class="text-xs font-semibold text-ink-soft">{{ fileName }}</span>
@@ -127,7 +127,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useTeacherStore } from '@/stores/teacher'
 
-const allowedExtensions = ['.pdf', '.ppt', '.pptx', '.doc', '.docx']
+const allowedExtensions = ['.pdf', '.doc', '.docx']
 const store = useTeacherStore()
 const router = useRouter()
 const search = ref('')
@@ -184,7 +184,7 @@ function onFileChange(event: Event) {
   const lowerName = file.name.toLowerCase()
   const isAllowed = allowedExtensions.some(extension => lowerName.endsWith(extension))
   if (!isAllowed) {
-    formError.value = 'Unsupported file type. Upload PDF, PowerPoint, or Word files only.'
+    formError.value = 'Unsupported file type. Upload PDF or Word files only.'
     input.value = ''
     return
   }
@@ -204,7 +204,7 @@ async function submitMaterial() {
   }
 
   if (!selectedFile.value) {
-    formError.value = 'Please select a PDF, PowerPoint, or Word file.'
+    formError.value = 'Please select a PDF or Word file.'
     return
   }
 
@@ -255,7 +255,7 @@ async function replaceMaterialFile(id: string, event: Event) {
   if (!file) return
   const isAllowed = allowedExtensions.some(extension => file.name.toLowerCase().endsWith(extension))
   if (!isAllowed) {
-    formError.value = 'Unsupported file type. Upload PDF, PowerPoint, or Word files only.'
+    formError.value = 'Unsupported file type. Upload PDF or Word files only.'
     input.value = ''
     return
   }

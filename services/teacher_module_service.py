@@ -2,7 +2,6 @@ from pathlib import Path
 from datetime import datetime
 import re
 import shutil
-import subprocess
 import zipfile
 from uuid import uuid4
 from fastapi.responses import FileResponse
@@ -16,32 +15,26 @@ from schemas.teacher_module_schema import TeacherModuleCreate, TeacherModuleUpda
 from utils.enum import RoleEnum
 from utils.options import ALLOWED_LEARNING_WEEKS, ALLOWED_MODULE_CONTENT_TYPES
 
-ALLOWED_MATERIAL_EXTENSIONS = {".pdf", ".ppt", ".pptx", ".doc", ".docx"}
+ALLOWED_MATERIAL_EXTENSIONS = {".pdf", ".doc", ".docx"}
 CONTENT_TYPE_EXTENSIONS = {
     "PDF": {".pdf"},
-    "PPT": {".ppt", ".pptx"},
     "DOCX": {".docx"},
 }
 CONTENT_TYPE_LABELS = {
     "PDF": "PDF",
-    "PPT": "PowerPoint",
     "DOCX": "DOCX",
 }
 ALLOWED_MATERIAL_TYPES = {
     "application/pdf",
     "application/msword",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "application/vnd.ms-powerpoint",
-    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 }
 UPLOAD_DIR = Path("uploads/learning_materials")
 MATERIAL_IMAGE_DIR = Path("static/material_images")
 PDF_PAGE_DIR = Path("static/pdf_pages")
-PRESENTATION_PDF_DIR = Path("static/presentation_pdfs")
 PDF_MIN_TOPIC_PAGES = 2
 PDF_TARGET_TOPIC_PAGES = 3
 PDF_MAX_TOPIC_PAGES = 5
-POWERPOINT_SLIDES_PER_TOPIC = 5
 
 
 def _ensure_teacher(current_user: Accounts):
@@ -298,13 +291,13 @@ def _validate_material_file(material_file: UploadFile, expected_content_type: st
     if extension not in ALLOWED_MATERIAL_EXTENSIONS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Unsupported file type. Upload PDF, PowerPoint, or Word files only."
+            detail="Unsupported file type. Upload PDF or Word files only."
         )
 
     if material_file.content_type and material_file.content_type not in ALLOWED_MATERIAL_TYPES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Unsupported file type. Upload PDF, PowerPoint, or Word files only."
+            detail="Unsupported file type. Upload PDF or Word files only."
         )
 
 
@@ -348,10 +341,6 @@ def _process_material_topics(db: Session, module: TeacherModule, path: Path):
         _replace_topic_records(db, module, _extract_pdf_logical_topics(path, module.title, module.description))
         return
 
-    if _is_powerpoint_path(path):
-        _replace_topic_records(db, module, _extract_powerpoint_logical_topics(path, module.title, module.description))
-        return
-
     _replace_generated_topics(
         db,
         module,
@@ -383,36 +372,14 @@ def _is_pdf_path(path: Path):
     return path.suffix.lower() == ".pdf"
 
 
-def _is_powerpoint_path(path: Path):
-    return path.suffix.lower() in {".ppt", ".pptx"}
-
-
 def _needs_pdf_topic_regeneration(module: TeacherModule):
     if not module.file_path or not _is_pdf_path(Path(module.file_path)):
         return False
     return _needs_page_image_topic_regeneration(module)
 
 
-def _needs_powerpoint_topic_regeneration(module: TeacherModule):
-    if not module.file_path or not _is_powerpoint_path(Path(module.file_path)):
-        return False
-    if not Path(module.file_path).exists():
-        return False
-    topics = module.topics or []
-    if not topics:
-        return True
-    image_counts = [len(topic.page_image_urls or []) for topic in topics]
-    if not any(image_counts):
-        return True
-    if any(count > POWERPOINT_SLIDES_PER_TOPIC for count in image_counts):
-        return True
-    if len(topics) > 1 and all(count <= 1 for count in image_counts):
-        return True
-    return False
-
-
 def _needs_material_topic_regeneration(module: TeacherModule):
-    return _needs_pdf_topic_regeneration(module) or _needs_powerpoint_topic_regeneration(module)
+    return _needs_pdf_topic_regeneration(module)
 
 
 def _needs_page_image_topic_regeneration(module: TeacherModule):
@@ -759,108 +726,6 @@ def fitz_matrix():
         return None
 
 
-def _extract_powerpoint_logical_topics(path: Path, module_title: str, module_description: str):
-    converted_pdf = _convert_powerpoint_to_pdf(path)
-    if converted_pdf:
-        topics = _extract_powerpoint_pdf_deck_topic(converted_pdf, module_title, module_description)
-        if topics:
-            return topics
-
-    raise HTTPException(
-        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        detail="PowerPoint rendering requires LibreOffice/soffice on the backend server. Install LibreOffice and make soffice available on PATH to preserve slide formatting.",
-    )
-
-
-def _convert_powerpoint_to_pdf(path: Path):
-    executable = _powerpoint_converter_executable()
-    if not executable:
-        return None
-
-    PRESENTATION_PDF_DIR.mkdir(parents=True, exist_ok=True)
-    try:
-        result = subprocess.run(
-            [
-                executable,
-                "--headless",
-                "--convert-to",
-                "pdf",
-                "--outdir",
-                str(PRESENTATION_PDF_DIR),
-                str(path),
-            ],
-            check=False,
-            capture_output=True,
-            timeout=90,
-        )
-    except Exception:
-        return None
-
-    candidate = PRESENTATION_PDF_DIR / f"{path.stem}.pdf"
-    if result.returncode == 0 and candidate.exists():
-        return candidate
-    return None
-
-
-def _powerpoint_converter_executable():
-    for name in ("soffice", "libreoffice"):
-        executable = shutil.which(name)
-        if executable:
-            return executable
-
-    common_paths = [
-        Path("C:/Program Files/LibreOffice/program/soffice.exe"),
-        Path("C:/Program Files (x86)/LibreOffice/program/soffice.exe"),
-    ]
-    for path in common_paths:
-        if path.exists():
-            return str(path)
-    return None
-
-
-def _extract_powerpoint_pdf_deck_topic(path: Path, module_title: str, module_description: str):
-    try:
-        import fitz
-    except ImportError:
-        return []
-
-    try:
-        document = fitz.open(str(path))
-    except Exception:
-        return []
-
-    page_image_urls = []
-    text_chunks = []
-    for page_index in range(document.page_count):
-        page = document.load_page(page_index)
-        content = page.get_text("text", sort=True).strip()
-        if content:
-            text_chunks.append(f"Slide {page_index + 1}\n{content}")
-        page_image_urls.extend(_render_pdf_topic_pages(document, page_index, page_index + 1))
-
-    document.close()
-    if not page_image_urls:
-        return []
-    return _build_powerpoint_slide_topics(module_title, module_description, text_chunks, page_image_urls)
-
-
-def _build_powerpoint_slide_topics(module_title: str, module_description: str, text_chunks: list[str], page_image_urls: list[str]):
-    topics = []
-    for start in range(0, len(page_image_urls), POWERPOINT_SLIDES_PER_TOPIC):
-        end = min(start + POWERPOINT_SLIDES_PER_TOPIC, len(page_image_urls))
-        topic_number = len(topics) + 1
-        range_text = f"Slides {start + 1} to {end}" if start + 1 != end else f"Slide {end}"
-        content = "\n\n".join(text_chunks[start:end]).strip()
-        topics.append({
-            "title": f"Topic {topic_number}: {range_text}",
-            "description": module_description or range_text,
-            "content": content or module_description or f"Open {range_text.lower()} from {module_title}.",
-            "image_url": None,
-            "page_image_urls": page_image_urls[start:end],
-        })
-    return topics
-
-
 def _summarize_topic(title: str, content: str):
     sentences = re.split(r"(?<=[.!?])\s+", " ".join(content.split()))
     useful = [sentence for sentence in sentences if len(sentence.split()) >= 6 and title.lower() not in sentence.lower()]
@@ -886,8 +751,6 @@ def _extract_material_text(path: Path, title: str, description: str):
             text = _extract_pdf_text(path)
         elif extension == ".docx":
             text = _extract_docx_text(path)
-        elif extension == ".pptx":
-            text = _extract_pptx_text(path)
         else:
             text = ""
     except Exception:
@@ -927,29 +790,11 @@ def _extract_docx_text(path: Path):
     return "\n\n".join(lines)
 
 
-def _extract_pptx_text(path: Path):
-    try:
-        from pptx import Presentation
-    except ImportError:
-        return ""
-
-    presentation = Presentation(str(path))
-    lines = []
-    for slide_number, slide in enumerate(presentation.slides, start=1):
-        slide_lines = []
-        for shape in slide.shapes:
-            if hasattr(shape, "text") and shape.text.strip():
-                slide_lines.append(shape.text.strip())
-        if slide_lines:
-            lines.append(f"Slide {slide_number}\n" + "\n".join(slide_lines))
-    return "\n\n".join(lines)
-
-
 def _extract_material_images(path: Path):
-    if path.suffix.lower() not in {".docx", ".pptx"}:
+    if path.suffix.lower() != ".docx":
         return []
 
-    media_prefix = "word/media/" if path.suffix.lower() == ".docx" else "ppt/media/"
+    media_prefix = "word/media/"
     urls = []
     MATERIAL_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
 
