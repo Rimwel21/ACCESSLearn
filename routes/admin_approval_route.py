@@ -1,15 +1,17 @@
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy import desc, or_
 from sqlalchemy.orm import Session
 from models.accounts import Accounts
 from models.audit_log import AuditLog
 from schemas.accounts_schema import PendingTeacherResponse
+from schemas.admin_schema import AccountListOut, AccountStatusUpdate
 from utils.enum import AccountStatusEnum, RoleEnum
 from utils.dependencies import get_current_user, get_db
 from services.admin_approval_service import admin_approval, admin_block, teachers_pending_account
+from services.account_admin_service import change_account_status, hard_delete_account
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
@@ -77,6 +79,37 @@ def list_admin_accounts(
             for account in items
         ],
     }
+
+
+@router.patch("/accounts/{account_id}/status", response_model=AccountListOut)
+def update_admin_account_status(
+    account_id: int,
+    data: AccountStatusUpdate,
+    request: Request,
+    current_user: Accounts = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_admin(current_user)
+    return change_account_status(
+        db,
+        account_id,
+        data.account_status,
+        admin=current_user,
+        reason=data.reason,
+        request=request,
+    )
+
+
+@router.delete("/accounts/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_admin_account(
+    account_id: int,
+    request: Request,
+    current_user: Accounts = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_admin(current_user)
+    hard_delete_account(db, account_id, admin=current_user, request=request)
+    return
 
 
 @router.get("/audit-logs")

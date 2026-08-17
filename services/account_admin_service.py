@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from models.accounts import Accounts
 from repositories.account_repository import AccountRepository
-from utils.enum import AccountStatusEnum, RoleEnum, AuditActionEnum, BulkActionEnum
+from utils.enum import AccountStatusEnum, RoleEnum, AuditActionEnum, BulkActionEnum, VerificationStatus
 from services.audit_service import write_log
 
 def list_accounts(
@@ -43,6 +43,16 @@ def change_account_status(
         raise HTTPException(status_code=403, detail="Cannot modify another admin account.")
 
     old_status = account.account_status
+    old_verification_status = account.verification_status
+
+    if account.role == RoleEnum.teacher:
+        if new_status == AccountStatusEnum.active:
+            account.verification_status = VerificationStatus.verified
+        elif new_status == AccountStatusEnum.suspended:
+            account.verification_status = VerificationStatus.blocked
+        elif new_status == AccountStatusEnum.pending_activation:
+            account.verification_status = VerificationStatus.pending
+
     updated_account = AccountRepository.update_status(db, account, new_status)
 
     action_map = {
@@ -117,8 +127,8 @@ def change_account_status(
         actor_id        = admin.id,
         actor_role      = admin.role,
         affected_record = f"Account #{account_id} ({account.email or account.username})",
-        old_value       = {"account_status": old_status},
-        new_value       = {"account_status": new_status},
+        old_value       = {"account_status": old_status, "verification_status": old_verification_status},
+        new_value       = {"account_status": new_status, "verification_status": account.verification_status},
         reason          = reason,
         request         = request,
     )

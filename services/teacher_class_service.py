@@ -60,8 +60,8 @@ def list_teacher_classes(request: Request, db: Session, current_user: Accounts):
             "school_year": None,
             "student_count": student_count,
             "teacher_id": current_user.id,
-            "created_at": utc_now,
-            "updated_at": utc_now,
+            "created_at": utc_now(),
+            "updated_at": utc_now(),
         })
     return result
 

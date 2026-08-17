@@ -4,7 +4,7 @@ from utils.email_template import otp_email_template
 
 conf = ConnectionConfig(
     MAIL_USERNAME=settings.MAIL_USERNAME,
-    MAIL_PASSWORD=settings.MAIL_PASSWORD,
+    MAIL_PASSWORD=settings.MAIL_PASSWORD.replace(" ", ""),
 
     MAIL_FROM=settings.MAIL_FROM,
     MAIL_FROM_NAME=settings.MAIL_FROM_NAME,
@@ -21,10 +21,10 @@ conf = ConnectionConfig(
 class EmailService:
 
     @staticmethod
-    async def send_teacher_otp_email(email: str, otp: str):
+    async def send_otp_email(email: str, otp: str, subject: str = "Your ACCESSLearn OTP code"):
 
         message = MessageSchema(
-            subject="Your ACCESSLearn OTP code",
+            subject=subject,
 
             recipients=[email],
 
@@ -36,3 +36,11 @@ class EmailService:
 
         fm = FastMail(conf)
         await fm.send_message(message)
+
+    @staticmethod
+    async def send_teacher_otp_email(email: str, otp: str):
+        await EmailService.send_otp_email(email, otp)
+
+    @staticmethod
+    async def send_admin_password_reset_otp_email(email: str, otp: str):
+        await EmailService.send_otp_email(email, otp, "Your SIGNHEAR admin password reset code")
