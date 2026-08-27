@@ -1,4 +1,6 @@
+# pyrefly: ignore [missing-import]
 from sqlalchemy import inspect, text
+# pyrefly: ignore [missing-import]
 from sqlalchemy.orm import Session
 
 from database.connection import engine
@@ -45,14 +47,21 @@ def _ensure_hi_sections_teacher_id() -> None:
     if "teacher_id" in columns:
         return
 
+    is_pg = engine.dialect.name == "postgresql"
     with engine.begin() as connection:
-        connection.execute(text(
-            "ALTER TABLE hi_sections "
-            "ADD COLUMN IF NOT EXISTS teacher_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL"
-        ))
-        connection.execute(text(
-            "CREATE INDEX IF NOT EXISTS ix_hi_sections_teacher_id ON hi_sections (teacher_id)"
-        ))
+        if is_pg:
+            connection.execute(text(
+                "ALTER TABLE hi_sections "
+                "ADD COLUMN IF NOT EXISTS teacher_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL"
+            ))
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_hi_sections_teacher_id ON hi_sections (teacher_id)"
+            ))
+        else:
+            # SQLite: plain ALTER TABLE without IF NOT EXISTS support
+            connection.execute(text(
+                "ALTER TABLE hi_sections ADD COLUMN teacher_id INTEGER REFERENCES accounts(id)"
+            ))
 
 
 
@@ -122,19 +131,24 @@ def _ensure_teacher_grade_handles_schema() -> None:
 
     columns = {column["name"] for column in inspector.get_columns(table_name)}
 
+    is_pg = engine.dialect.name == "postgresql"
     with engine.begin() as connection:
         if "grade_level_id" not in columns:
-            connection.execute(text(
-                "ALTER TABLE teacher_grade_handles "
-                "ADD COLUMN IF NOT EXISTS grade_level_id INTEGER REFERENCES grade_levels(id)"
-            ))
+            if is_pg:
+                connection.execute(text(
+                    "ALTER TABLE teacher_grade_handles "
+                    "ADD COLUMN IF NOT EXISTS grade_level_id INTEGER REFERENCES grade_levels(id)"
+                ))
+            else:
+                connection.execute(text(
+                    "ALTER TABLE teacher_grade_handles ADD COLUMN grade_level_id INTEGER REFERENCES grade_levels(id)"
+                ))
 
-        if "grade_level_handles" in columns:
+        if is_pg and "grade_level_handles" in columns:
             connection.execute(text(
                 "ALTER TABLE teacher_grade_handles "
                 "ALTER COLUMN grade_level_handles DROP NOT NULL"
             ))
-
             connection.execute(text(
                 """
                 UPDATE teacher_grade_handles AS handles
@@ -146,10 +160,11 @@ def _ensure_teacher_grade_handles_schema() -> None:
                 """
             ))
 
-        connection.execute(text(
-            "CREATE INDEX IF NOT EXISTS ix_teacher_grade_handles_grade_level_id "
-            "ON teacher_grade_handles (grade_level_id)"
-        ))
+        if is_pg:
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_teacher_grade_handles_grade_level_id "
+                "ON teacher_grade_handles (grade_level_id)"
+            ))
 
 
 def _ensure_teacher_assessments_schema() -> None:
@@ -161,17 +176,28 @@ def _ensure_teacher_assessments_schema() -> None:
 
     columns = {column["name"] for column in inspector.get_columns(table_name)}
 
+    is_pg = engine.dialect.name == "postgresql"
     with engine.begin() as connection:
         if "due_at" not in columns:
-            connection.execute(text(
-                "ALTER TABLE teacher_assessments "
-                "ADD COLUMN IF NOT EXISTS due_at TIMESTAMP WITH TIME ZONE"
-            ))
+            if is_pg:
+                connection.execute(text(
+                    "ALTER TABLE teacher_assessments "
+                    "ADD COLUMN IF NOT EXISTS due_at TIMESTAMP WITH TIME ZONE"
+                ))
+            else:
+                connection.execute(text(
+                    "ALTER TABLE teacher_assessments ADD COLUMN due_at DATETIME"
+                ))
         if "time_limit_seconds" not in columns:
-            connection.execute(text(
-                "ALTER TABLE teacher_assessments "
-                "ADD COLUMN IF NOT EXISTS time_limit_seconds INTEGER"
-            ))
+            if is_pg:
+                connection.execute(text(
+                    "ALTER TABLE teacher_assessments "
+                    "ADD COLUMN IF NOT EXISTS time_limit_seconds INTEGER"
+                ))
+            else:
+                connection.execute(text(
+                    "ALTER TABLE teacher_assessments ADD COLUMN time_limit_seconds INTEGER"
+                ))
             rows = connection.execute(text(
                 "SELECT id, time_limit FROM teacher_assessments WHERE time_limit IS NOT NULL"
             )).fetchall()
@@ -195,23 +221,39 @@ def _ensure_student_quiz_progress_schema() -> None:
 
     columns = {column["name"] for column in inspector.get_columns(table_name)}
 
+    is_pg = engine.dialect.name == "postgresql"
     with engine.begin() as connection:
         if "time_limit_seconds" not in columns:
-            connection.execute(text(
-                "ALTER TABLE student_quiz_progress "
-                "ADD COLUMN IF NOT EXISTS time_limit_seconds INTEGER"
-            ))
+            if is_pg:
+                connection.execute(text(
+                    "ALTER TABLE student_quiz_progress "
+                    "ADD COLUMN IF NOT EXISTS time_limit_seconds INTEGER"
+                ))
+            else:
+                connection.execute(text(
+                    "ALTER TABLE student_quiz_progress ADD COLUMN time_limit_seconds INTEGER"
+                ))
         if "expires_at" not in columns:
-            connection.execute(text(
-                "ALTER TABLE student_quiz_progress "
-                "ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP WITH TIME ZONE"
-            ))
+            if is_pg:
+                connection.execute(text(
+                    "ALTER TABLE student_quiz_progress "
+                    "ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP WITH TIME ZONE"
+                ))
+            else:
+                connection.execute(text(
+                    "ALTER TABLE student_quiz_progress ADD COLUMN expires_at DATETIME"
+                ))
         if "submission_type" not in columns:
-            connection.execute(text(
-                "ALTER TABLE student_quiz_progress "
-                "ADD COLUMN IF NOT EXISTS submission_type VARCHAR(20)"
-            ))
-        if engine.dialect.name == "postgresql":
+            if is_pg:
+                connection.execute(text(
+                    "ALTER TABLE student_quiz_progress "
+                    "ADD COLUMN IF NOT EXISTS submission_type VARCHAR(20)"
+                ))
+            else:
+                connection.execute(text(
+                    "ALTER TABLE student_quiz_progress ADD COLUMN submission_type VARCHAR(20)"
+                ))
+        if is_pg:
             connection.execute(text(
                 "ALTER TABLE student_quiz_progress "
                 "ALTER COLUMN started_at DROP NOT NULL"
@@ -246,82 +288,99 @@ def _ensure_student_profile_registration_schema() -> None:
 
     columns = {column["name"] for column in inspector.get_columns(table_name)}
 
+    is_pg = engine.dialect.name == "postgresql"
     with engine.begin() as connection:
         if "student_lrn" not in columns:
-            connection.execute(text(
-                "ALTER TABLE student_profiles "
-                "ADD COLUMN IF NOT EXISTS student_lrn VARCHAR(12)"
-            ))
+            if is_pg:
+                connection.execute(text(
+                    "ALTER TABLE student_profiles "
+                    "ADD COLUMN IF NOT EXISTS student_lrn VARCHAR(12)"
+                ))
+            else:
+                connection.execute(text(
+                    "ALTER TABLE student_profiles ADD COLUMN student_lrn VARCHAR(12)"
+                ))
 
         if "accessibility_profile" not in columns:
-            connection.execute(text(
-                "ALTER TABLE student_profiles "
-                "ADD COLUMN IF NOT EXISTS accessibility_profile VARCHAR"
-            ))
+            if is_pg:
+                connection.execute(text(
+                    "ALTER TABLE student_profiles "
+                    "ADD COLUMN IF NOT EXISTS accessibility_profile VARCHAR"
+                ))
+            else:
+                connection.execute(text(
+                    "ALTER TABLE student_profiles ADD COLUMN accessibility_profile VARCHAR"
+                ))
 
         if "learning_preferences" not in columns:
+            if is_pg:
+                connection.execute(text(
+                    "ALTER TABLE student_profiles "
+                    "ADD COLUMN IF NOT EXISTS learning_preferences VARCHAR"
+                ))
+            else:
+                connection.execute(text(
+                    "ALTER TABLE student_profiles ADD COLUMN learning_preferences VARCHAR"
+                ))
+
+        # PostgreSQL-only: partial unique index and FK migration via DO $$ block
+        if is_pg:
             connection.execute(text(
-                "ALTER TABLE student_profiles "
-                "ADD COLUMN IF NOT EXISTS learning_preferences VARCHAR"
+                "CREATE UNIQUE INDEX IF NOT EXISTS ix_student_profiles_student_lrn "
+                "ON student_profiles (student_lrn) WHERE student_lrn IS NOT NULL"
             ))
+            connection.execute(text(
+                """
+                DO $$
+                DECLARE
+                    stale_fk_name TEXT;
+                BEGIN
+                    SELECT constraint_name INTO stale_fk_name
+                    FROM information_schema.referential_constraints
+                    WHERE constraint_schema = current_schema()
+                      AND constraint_name IN (
+                        SELECT tc.constraint_name
+                        FROM information_schema.table_constraints tc
+                        JOIN information_schema.key_column_usage kcu
+                          ON tc.constraint_name = kcu.constraint_name
+                         AND tc.constraint_schema = kcu.constraint_schema
+                        WHERE tc.table_name = 'student_profiles'
+                          AND tc.constraint_type = 'FOREIGN KEY'
+                          AND kcu.column_name = 'section_id'
+                      )
+                      AND unique_constraint_name IN (
+                        SELECT constraint_name
+                        FROM information_schema.table_constraints
+                        WHERE table_name = 'sections'
+                          AND constraint_type IN ('PRIMARY KEY', 'UNIQUE')
+                      )
+                    LIMIT 1;
 
-        connection.execute(text(
-            "CREATE UNIQUE INDEX IF NOT EXISTS ix_student_profiles_student_lrn "
-            "ON student_profiles (student_lrn) WHERE student_lrn IS NOT NULL"
-        ))
+                    IF stale_fk_name IS NOT NULL THEN
+                        EXECUTE format('ALTER TABLE student_profiles DROP CONSTRAINT %I', stale_fk_name);
+                    END IF;
 
-        connection.execute(text(
-            """
-            DO $$
-            DECLARE
-                stale_fk_name TEXT;
-            BEGIN
-                SELECT constraint_name INTO stale_fk_name
-                FROM information_schema.referential_constraints
-                WHERE constraint_schema = current_schema()
-                  AND constraint_name IN (
-                    SELECT tc.constraint_name
-                    FROM information_schema.table_constraints tc
-                    JOIN information_schema.key_column_usage kcu
-                      ON tc.constraint_name = kcu.constraint_name
-                     AND tc.constraint_schema = kcu.constraint_schema
-                    WHERE tc.table_name = 'student_profiles'
-                      AND tc.constraint_type = 'FOREIGN KEY'
-                      AND kcu.column_name = 'section_id'
-                  )
-                  AND unique_constraint_name IN (
-                    SELECT constraint_name
-                    FROM information_schema.table_constraints
-                    WHERE table_name = 'sections'
-                      AND constraint_type IN ('PRIMARY KEY', 'UNIQUE')
-                  )
-                LIMIT 1;
-
-                IF stale_fk_name IS NOT NULL THEN
-                    EXECUTE format('ALTER TABLE student_profiles DROP CONSTRAINT %I', stale_fk_name);
-                END IF;
-
-                IF NOT EXISTS (
-                    SELECT 1
-                    FROM information_schema.table_constraints tc
-                    JOIN information_schema.key_column_usage kcu
-                      ON tc.constraint_name = kcu.constraint_name
-                     AND tc.constraint_schema = kcu.constraint_schema
-                    JOIN information_schema.referential_constraints rc
-                      ON tc.constraint_name = rc.constraint_name
-                     AND tc.constraint_schema = rc.constraint_schema
-                    JOIN information_schema.table_constraints parent_tc
-                      ON rc.unique_constraint_name = parent_tc.constraint_name
-                     AND rc.unique_constraint_schema = parent_tc.constraint_schema
-                    WHERE tc.table_name = 'student_profiles'
-                      AND tc.constraint_type = 'FOREIGN KEY'
-                      AND kcu.column_name = 'section_id'
-                      AND parent_tc.table_name = 'hi_sections'
-                ) THEN
-                    ALTER TABLE student_profiles
-                    ADD CONSTRAINT student_profiles_section_id_fkey
-                    FOREIGN KEY (section_id) REFERENCES hi_sections(id) NOT VALID;
-                END IF;
-            END $$;
-            """
-        ))
+                    IF NOT EXISTS (
+                        SELECT 1
+                        FROM information_schema.table_constraints tc
+                        JOIN information_schema.key_column_usage kcu
+                          ON tc.constraint_name = kcu.constraint_name
+                         AND tc.constraint_schema = kcu.constraint_schema
+                        JOIN information_schema.referential_constraints rc
+                          ON tc.constraint_name = rc.constraint_name
+                         AND tc.constraint_schema = rc.constraint_schema
+                        JOIN information_schema.table_constraints parent_tc
+                          ON rc.unique_constraint_name = parent_tc.constraint_name
+                         AND rc.unique_constraint_schema = parent_tc.constraint_schema
+                        WHERE tc.table_name = 'student_profiles'
+                          AND tc.constraint_type = 'FOREIGN KEY'
+                          AND kcu.column_name = 'section_id'
+                          AND parent_tc.table_name = 'hi_sections'
+                    ) THEN
+                        ALTER TABLE student_profiles
+                        ADD CONSTRAINT student_profiles_section_id_fkey
+                        FOREIGN KEY (section_id) REFERENCES hi_sections(id) NOT VALID;
+                    END IF;
+                END $$;
+                """
+            ))
