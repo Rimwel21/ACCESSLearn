@@ -3,6 +3,7 @@ from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 from models.accounts import Accounts
+from models.handsign_tutorial_practice import HandsignTutorialPractice
 from models.learning_topic import LearningTopic
 from models.student_progress import StudentTopicProgress
 from models.student_profile import StudentProfile
@@ -578,6 +579,143 @@ def get_teacher_dashboard_summary(request: Request, class_id: int | None, db: Se
         "average_quiz_score": quiz_average,
         "student_progress": student_progress,
     }
+
+
+def list_teacher_student_records(
+    request: Request,
+    class_id: int | None,
+    assessment_type: str | None,
+    status_filter: str | None,
+    search: str | None,
+    db: Session,
+    current_user: Accounts,
+):
+    _ensure_teacher(current_user)
+    if class_id is None:
+        classes = (
+            db.query(TeacherClass)
+            .options(joinedload(TeacherClass.grade_levels), joinedload(TeacherClass.sections))
+            .filter(TeacherClass.teacher_id == current_user.id)
+            .all()
+        )
+    else:
+        classes = [get_teacher_class(request=request, class_id=class_id, db=db, current_user=current_user)]
+
+    students = _unique_students_for_classes(classes, db)
+    if search:
+        query = search.strip().lower()
+        students = [student for student in students if query in (student.name or '').lower()]
+
+    class_ids = [teacher_class.id for teacher_class in classes]
+    student_ids = [student.account_id for student in students]
+    if not class_ids or not student_ids:
+        return []
+
+    module_ids = [
+        row.id for row in db.query(TeacherModule.id)
+        .filter(TeacherModule.teacher_id == current_user.id, TeacherModule.class_id.in_(class_ids))
+        .all()
+    ]
+    assessment_filters = [TeacherAssessment.teacher_id == current_user.id]
+    activity_filter = (
+        (TeacherAssessment.assessment_type == 'activity')
+        & (TeacherAssessment.class_id.in_(class_ids))
+    )
+    quiz_filter = (
+        (TeacherAssessment.assessment_type == 'quiz')
+        & (TeacherAssessment.module_id.in_(module_ids))
+    ) if module_ids else None
+    assessment_filters.append(activity_filter | quiz_filter if quiz_filter is not None else activity_filter)
+    if assessment_type in {'activity', 'quiz'}:
+        assessment_filters.append(TeacherAssessment.assessment_type == assessment_type)
+
+    assessments = (
+        db.query(TeacherAssessment)
+        .filter(*assessment_filters)
+        .order_by(TeacherAssessment.created_at.desc())
+        .all()
+    )
+    assessment_ids = [assessment.id for assessment in assessments]
+    assessments_by_id = {assessment.id: assessment for assessment in assessments}
+
+    progress_rows = (
+        db.query(StudentQuizProgress)
+        .filter(
+            StudentQuizProgress.student_id.in_(student_ids),
+            StudentQuizProgress.assessment_id.in_(assessment_ids),
+        )
+        .all()
+    ) if assessment_ids else []
+    progress_by_student: dict[int, list[StudentQuizProgress]] = {}
+    for progress in progress_rows:
+        progress_by_student.setdefault(progress.student_id, []).append(progress)
+
+    handsign_rows = (
+        db.query(HandsignTutorialPractice)
+        .filter(
+            HandsignTutorialPractice.student_id.in_(student_ids),
+            HandsignTutorialPractice.activity_id.in_(assessment_ids),
+        )
+        .order_by(HandsignTutorialPractice.completed_at.desc().nullslast())
+        .all()
+    ) if assessment_ids else []
+    handsign_by_student: dict[int, list[HandsignTutorialPractice]] = {}
+    for practice in handsign_rows:
+        handsign_by_student.setdefault(practice.student_id, []).append(practice)
+
+    records = []
+    for student in students:
+        summary = _dashboard_progress_for_student(student, classes, db, current_user)
+        assessment_records = []
+        for progress in sorted(progress_by_student.get(student.account_id, []), key=lambda item: item.updated_at, reverse=True):
+            assessment = assessments_by_id.get(progress.assessment_id)
+            if not assessment:
+                continue
+            expected_answers = [
+                str(question.get('answer') or '').strip()
+                for question in (assessment.questions or [])
+                if str(question.get('answer') or '').strip()
+            ]
+            assessment_records.append({
+                'assessment_id': assessment.id,
+                'title': assessment.title,
+                'assessment_type': assessment.assessment_type,
+                'expected_answers': expected_answers,
+                'status': progress.status,
+                'score': progress.score,
+                'total': progress.total,
+                'answers': progress.answers or {},
+                'completed_at': progress.completed_at,
+                'submission_type': progress.submission_type,
+            })
+
+        if status_filter and status_filter != 'all':
+            normalized_status = status_filter.strip().lower().replace('_', ' ')
+            if normalized_status not in {summary['status'].lower(), *(item['status'].lower().replace('_', ' ') for item in assessment_records)}:
+                continue
+
+        handsign_records = []
+        for practice in handsign_by_student.get(student.account_id, []):
+            activity = assessments_by_id.get(practice.activity_id)
+            handsign_records.append({
+                'id': practice.id,
+                'activity_id': practice.activity_id,
+                'activity_title': activity.title if activity else None,
+                'word': practice.canonical_word,
+                'attempt_scores': practice.attempt_scores or [],
+                'highest_score': practice.highest_score,
+                'completed_at': practice.completed_at,
+            })
+
+        records.append({
+            **summary,
+            'grade_level': student.grade_level.name if student.grade_level else None,
+            'section': student.section.name if student.section else None,
+            'assessments': assessment_records,
+            'handsign_practice': handsign_records,
+        })
+
+    return records
 
 
 def _resolve_manual_section(teacher_class: TeacherClassCreate, db: Session):

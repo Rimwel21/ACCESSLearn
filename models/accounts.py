@@ -43,6 +43,7 @@ class Accounts(Base):
 
     topic_progress = relationship("StudentTopicProgress", passive_deletes=True)
     quiz_progress = relationship("StudentQuizProgress", passive_deletes=True)
+    tutorial_practices = relationship("HandsignTutorialPractice", passive_deletes=True)
 
     audit_logs = relationship(
         "AuditLog",

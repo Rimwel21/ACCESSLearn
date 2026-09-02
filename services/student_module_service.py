@@ -12,6 +12,7 @@ from models.teacher_class import TeacherClass
 from models.teacher_module import TeacherModule
 from services.teacher_module_service import _needs_material_topic_regeneration, _process_material_topics
 from utils.enum import RoleEnum
+from utils.handsign.science_vocabulary import answers_match
 from utils.utc_now import utc_now
 
 
@@ -456,9 +457,9 @@ def submit_class_activity_progress(request: Request, activity_id: int, answers: 
     total = len(questions)
     score = 0
     for index, question in enumerate(questions):
-        expected = _normalize_answer(question.get("answer") or "")
-        actual = _normalize_answer(str(answers.get(str(index), answers.get(index, ""))))
-        if expected and expected == actual:
+        expected = question.get("answer") or ""
+        actual = str(answers.get(str(index), answers.get(index, "")))
+        if expected and answers_match(actual, expected):
             score += 1
 
     if not progress:
@@ -555,9 +556,9 @@ def _complete_assessment_progress(progress: StudentQuizProgress, assessment: Tea
 def _score_answers(questions: list[dict], answers: dict):
     score = 0
     for index, question in enumerate(questions):
-        expected = _normalize_answer(question.get("answer") or "")
-        actual = _normalize_answer(str(answers.get(str(index), answers.get(index, ""))))
-        if expected and expected == actual:
+        expected = question.get("answer") or ""
+        actual = str(answers.get(str(index), answers.get(index, "")))
+        if expected and answers_match(actual, expected):
             score += 1
     return score
 
