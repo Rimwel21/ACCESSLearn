@@ -37,6 +37,7 @@ from models.student_quiz_progress import StudentQuizProgress
 from models.email_otp import EmailOTP
 from models.grade_levels import GradeLevels
 from models.HI_sections import HI_SECTIONS
+from models.handsign_tutorial_practice import HandsignTutorialPractice
 target_metadata = Base.metadata
 
 

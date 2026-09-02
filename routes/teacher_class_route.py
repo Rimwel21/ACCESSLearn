@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 from limiter import limiter
 from models.accounts import Accounts
-from schemas.teacher_class_schema import ClassStudentOut, RecentActivityOut, TeacherClassCreate, TeacherClassOut, TeacherDashboardSummaryOut
+from schemas.teacher_class_schema import ClassStudentOut, RecentActivityOut, TeacherClassCreate, TeacherClassOut, TeacherDashboardSummaryOut, TeacherStudentRecordOut
 from services.teacher_class_service import (
     create_teacher_class,
     delete_teacher_class,
@@ -11,6 +11,7 @@ from services.teacher_class_service import (
     list_recent_activities,
     list_class_students,
     list_teacher_classes,
+    list_teacher_student_records,
 )
 from utils.dependencies import get_current_user, get_db
 
@@ -31,6 +32,28 @@ def get_teacher_dashboard_summary_route(
         class_id=class_id,
         db=db,
         current_user=current_user
+    )
+
+
+@router.get("/student-records", response_model=list[TeacherStudentRecordOut])
+@limiter.limit("20/minute")
+def list_teacher_student_records_route(
+    request: Request,
+    class_id: int | None = Query(None),
+    assessment_type: str | None = Query(None),
+    status_filter: str | None = Query(None),
+    search: str | None = Query(None),
+    db: Session = Depends(get_db),
+    current_user: Accounts = Depends(get_current_user),
+):
+    return list_teacher_student_records(
+        request=request,
+        class_id=class_id,
+        assessment_type=assessment_type,
+        status_filter=status_filter,
+        search=search,
+        db=db,
+        current_user=current_user,
     )
 
 

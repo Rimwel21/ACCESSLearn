@@ -103,3 +103,45 @@ class TeacherDashboardSummaryOut(BaseModel):
     active_learning_materials: int
     average_quiz_score: int
     student_progress: list[DashboardStudentProgressOut] = []
+
+
+class TeacherStudentRecordAssessmentOut(BaseModel):
+    assessment_id: int
+    title: str
+    assessment_type: str
+    expected_answers: list[str] = Field(default_factory=list)
+    status: str
+    score: int | None = None
+    total: int | None = None
+    answers: dict = Field(default_factory=dict)
+    completed_at: datetime | None = None
+    submission_type: str | None = None
+
+
+class TeacherStudentRecordHandsignOut(BaseModel):
+    id: int
+    activity_id: int
+    activity_title: str | None = None
+    word: str
+    attempt_scores: list[float] = Field(default_factory=list)
+    highest_score: float
+    completed_at: datetime | None = None
+
+
+class TeacherStudentRecordOut(BaseModel):
+    student_id: int
+    student_name: str
+    grade_level: str | None = None
+    section: str | None = None
+    overall_percent: int
+    activity_percent: int
+    learning_materials_completed: int = 0
+    learning_materials_in_progress: int = 0
+    learning_materials_total: int = 0
+    activities_completed: int
+    activities_total: int
+    status: str
+    last_activity: datetime | None = None
+    quiz_activity: str | None = None
+    assessments: list[TeacherStudentRecordAssessmentOut] = Field(default_factory=list)
+    handsign_practice: list[TeacherStudentRecordHandsignOut] = Field(default_factory=list)
