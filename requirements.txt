@@ -27,6 +27,7 @@ python-jose==3.5.0
 python-multipart==0.0.21
 pypdf==6.4.2
 python-docx==1.2.0
+python-pptx==1.0.2
 PyMuPDF==1.26.7
 rsa==4.9.1
 six==1.17.0

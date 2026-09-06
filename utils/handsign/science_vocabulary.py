@@ -71,6 +71,49 @@ def canonical_word(word: str | None) -> str:
 
 
 def answers_match(recognized_answer: str | None, expected_answer: str | None) -> bool:
+    if not expected_answer or not recognized_answer:
+        return False
+
+    raw_expected = str(expected_answer).strip()
+    raw_recognized = str(recognized_answer).strip()
+
+    # Check if expected_answer is an encoded Multiple Choice string (e.g. "A:Leaf|B:Stem|CORRECT:B")
+    if "CORRECT:" in raw_expected and "|" in raw_expected:
+        parts = raw_expected.split("|")
+        correct_letter = ""
+        choice_map: dict[str, str] = {}
+        for part in parts:
+            if ":" in part:
+                k, v = part.split(":", 1)
+                k = k.strip()
+                v = v.strip()
+                if k == "CORRECT":
+                    correct_letter = v.upper()
+                elif k:
+                    choice_map[k.upper()] = v
+
+        correct_text = choice_map.get(correct_letter, "")
+        rec_upper = raw_recognized.upper()
+
+        if rec_upper == correct_letter:
+            return True
+        if correct_text and normalize_answer(raw_recognized) == normalize_answer(correct_text):
+            return True
+        if correct_text and canonicalize_answer(raw_recognized) and canonicalize_answer(raw_recognized) == canonicalize_answer(correct_text):
+            return True
+        return False
+
+    # True or False handling
+    exp_up = raw_expected.upper()
+    if exp_up in {"TRUE", "FALSE"}:
+        rec_up = raw_recognized.upper()
+        if rec_up == exp_up:
+            return True
+        if exp_up == "TRUE" and rec_up in {"T", "YES"}:
+            return True
+        if exp_up == "FALSE" and rec_up in {"F", "NO"}:
+            return True
+
     expected = canonicalize_answer(expected_answer)
     recognized = canonicalize_answer(recognized_answer)
     if expected is not None or recognized is not None:
@@ -86,3 +129,4 @@ def validate_recognized_answer(recognized_answer: str | None, expected_answer: s
         "recognized_canonical": recognized,
         "is_correct": answers_match(recognized_answer, expected_answer),
     }
+
