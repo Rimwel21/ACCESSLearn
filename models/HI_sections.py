@@ -11,7 +11,7 @@ class HI_SECTIONS(Base):
     name = Column(String(100), nullable=False)
 
     grade_level_id = Column(Integer, ForeignKey("grade_levels.id", ondelete="CASCADE"), nullable=False, index=True)
-
+ 
     # Assigned teacher (set by admin)
     teacher_id = Column(Integer, ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True, index=True)
 
