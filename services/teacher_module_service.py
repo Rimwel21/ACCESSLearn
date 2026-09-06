@@ -15,19 +15,25 @@ from schemas.teacher_module_schema import TeacherModuleCreate, TeacherModuleUpda
 from utils.enum import RoleEnum
 from utils.options import ALLOWED_LEARNING_WEEKS, ALLOWED_MODULE_CONTENT_TYPES
 
-ALLOWED_MATERIAL_EXTENSIONS = {".pdf", ".doc", ".docx"}
+ALLOWED_MATERIAL_EXTENSIONS = {".pdf", ".doc", ".docx", ".ppt", ".pptx"}
 CONTENT_TYPE_EXTENSIONS = {
     "PDF": {".pdf"},
-    "DOCX": {".docx"},
+    "DOCX": {".docx", ".doc"},
+    "PPTX": {".pptx", ".ppt"},
+    "PPT": {".ppt", ".pptx"},
 }
 CONTENT_TYPE_LABELS = {
     "PDF": "PDF",
     "DOCX": "DOCX",
+    "PPTX": "PPTX",
+    "PPT": "PPT",
 }
 ALLOWED_MATERIAL_TYPES = {
     "application/pdf",
     "application/msword",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.ms-powerpoint",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 }
 UPLOAD_DIR = Path("uploads/learning_materials")
 MATERIAL_IMAGE_DIR = Path("static/material_images")
@@ -749,8 +755,10 @@ def _extract_material_text(path: Path, title: str, description: str):
     try:
         if extension == ".pdf":
             text = _extract_pdf_text(path)
-        elif extension == ".docx":
+        elif extension in {".docx", ".doc"}:
             text = _extract_docx_text(path)
+        elif extension in {".pptx", ".ppt"}:
+            text = _extract_pptx_text(path)
         else:
             text = ""
     except Exception:
@@ -765,10 +773,7 @@ def _extract_pdf_text(path: Path):
     try:
         from pypdf import PdfReader
     except ImportError:
-        try:
-            from pypdf import PdfReader
-        except ImportError:
-            return ""
+        return ""
 
     reader = PdfReader(str(path))
     return "\n\n".join((page.extract_text() or "").strip() for page in reader.pages)
@@ -790,11 +795,42 @@ def _extract_docx_text(path: Path):
     return "\n\n".join(lines)
 
 
+def _extract_pptx_text(path: Path):
+    try:
+        from pptx import Presentation
+        prs = Presentation(str(path))
+        lines = []
+        for slide_num, slide in enumerate(prs.slides, 1):
+            slide_texts = []
+            for shape in slide.shapes:
+                if hasattr(shape, "text") and shape.text.strip():
+                    slide_texts.append(shape.text.strip())
+            if slide_texts:
+                lines.append(f"--- Slide {slide_num} ---\n" + "\n".join(slide_texts))
+        return "\n\n".join(lines)
+    except Exception:
+        try:
+            import xml.etree.ElementTree as ET
+            lines = []
+            with zipfile.ZipFile(path) as archive:
+                slide_files = sorted([m for m in archive.namelist() if m.startswith("ppt/slides/slide") and m.endswith(".xml")])
+                for idx, slide_file in enumerate(slide_files, 1):
+                    xml_data = archive.read(slide_file)
+                    root = ET.fromstring(xml_data)
+                    texts = [elem.text.strip() for elem in root.iter() if elem.text and elem.text.strip()]
+                    if texts:
+                        lines.append(f"--- Slide {idx} ---\n" + "\n".join(texts))
+            return "\n\n".join(lines)
+        except Exception:
+            return ""
+
+
 def _extract_material_images(path: Path):
-    if path.suffix.lower() != ".docx":
+    ext = path.suffix.lower()
+    if ext not in {".docx", ".pptx", ".ppt"}:
         return []
 
-    media_prefix = "word/media/"
+    media_prefix = "ppt/media/" if ext in {".pptx", ".ppt"} else "word/media/"
     urls = []
     MATERIAL_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -815,3 +851,4 @@ def _extract_material_images(path: Path):
         return []
 
     return urls
+
