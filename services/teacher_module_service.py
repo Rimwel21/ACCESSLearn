@@ -1,5 +1,6 @@
 from pathlib import Path
 from datetime import datetime
+import json
 import re
 import shutil
 import zipfile
@@ -347,6 +348,12 @@ def _process_material_topics(db: Session, module: TeacherModule, path: Path):
         _replace_topic_records(db, module, _extract_pdf_logical_topics(path, module.title, module.description))
         return
 
+    if _is_pptx_path(path):
+        topics = _extract_pptx_slide_topics(path, module.title, module.description)
+        if topics:
+            _replace_topic_records(db, module, topics)
+            return
+
     _replace_generated_topics(
         db,
         module,
@@ -376,6 +383,10 @@ def _replace_topic_records(db: Session, module: TeacherModule, topics: list[dict
 
 def _is_pdf_path(path: Path):
     return path.suffix.lower() == ".pdf"
+
+
+def _is_pptx_path(path: Path):
+    return path.suffix.lower() in {".pptx", ".ppt"}
 
 
 def _needs_pdf_topic_regeneration(module: TeacherModule):
@@ -795,18 +806,27 @@ def _extract_docx_text(path: Path):
     return "\n\n".join(lines)
 
 
+_SLIDE_MARKER_RE = re.compile(r'^-{2,}\s*Slide\s*\d+\s*-{2,}$', re.IGNORECASE)
+# Badge: "1. Julian Banzon" style — short label, max 5 words, not a full sentence
+_BADGE_RE = re.compile(r'^\d+\.\s+[A-Z][a-zA-Z]')
+
+
 def _extract_pptx_text(path: Path):
+    """Fallback plain-text extraction — strips --- Slide X --- markers."""
     try:
         from pptx import Presentation
         prs = Presentation(str(path))
+        slides = list(prs.slides)
         lines = []
-        for slide_num, slide in enumerate(prs.slides, 1):
+        for slide in slides:
             slide_texts = []
             for shape in slide.shapes:
                 if hasattr(shape, "text") and shape.text.strip():
-                    slide_texts.append(shape.text.strip())
+                    text = shape.text.strip()
+                    if not _SLIDE_MARKER_RE.match(text):
+                        slide_texts.append(text)
             if slide_texts:
-                lines.append(f"--- Slide {slide_num} ---\n" + "\n".join(slide_texts))
+                lines.append("\n".join(slide_texts))
         return "\n\n".join(lines)
     except Exception:
         try:
@@ -814,15 +834,172 @@ def _extract_pptx_text(path: Path):
             lines = []
             with zipfile.ZipFile(path) as archive:
                 slide_files = sorted([m for m in archive.namelist() if m.startswith("ppt/slides/slide") and m.endswith(".xml")])
-                for idx, slide_file in enumerate(slide_files, 1):
+                for slide_file in slide_files:
                     xml_data = archive.read(slide_file)
                     root = ET.fromstring(xml_data)
                     texts = [elem.text.strip() for elem in root.iter() if elem.text and elem.text.strip()]
+                    texts = [t for t in texts if not _SLIDE_MARKER_RE.match(t)]
                     if texts:
-                        lines.append(f"--- Slide {idx} ---\n" + "\n".join(texts))
+                        lines.append("\n".join(texts))
             return "\n\n".join(lines)
         except Exception:
             return ""
+
+
+def _group_pptx_slides(parsed_slides: list[dict]) -> list[dict]:
+    """Merge consecutive slides that share the same badge label into one topic."""
+    groups: list[dict] = []
+    current: dict | None = None
+
+    for slide in parsed_slides:
+        badge = slide["badge"]
+
+        # Merge into current group if badge matches
+        if badge and current and current["badge"] == badge:
+            current["paragraphs"].extend(slide["paragraphs"])
+            current["image_urls"].extend(slide["image_urls"])
+            continue
+
+        if current:
+            groups.append(current)
+
+        current = {
+            "title": slide["slide_title"],
+            "badge": badge,
+            "paragraphs": list(slide["paragraphs"]),
+            "image_urls": list(slide["image_urls"]),
+        }
+
+    if current:
+        groups.append(current)
+
+    # Drop fully empty groups
+    return [g for g in groups if g["paragraphs"] or g["image_urls"] or g["title"] or g["badge"]]
+
+
+def _extract_pptx_slide_topics(path: Path, module_title: str, module_description: str) -> list[dict]:
+    """Parse a PPTX into structured per-topic dicts with images extracted per slide."""
+    try:
+        from pptx import Presentation
+        from pptx.enum.shapes import MSO_SHAPE_TYPE
+    except ImportError:
+        return []
+
+    try:
+        prs = Presentation(str(path))
+        slides = list(prs.slides)
+    except Exception:
+        return []
+
+    if not slides:
+        return []
+
+    MATERIAL_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+    parsed_slides: list[dict] = []
+
+    for slide in slides:
+        slide_title = ""
+        badge_label = ""
+        paragraphs: list[str] = []
+        image_urls: list[str] = []
+
+        # Capture declared title shape first
+        title_shape = slide.shapes.title
+        if title_shape and title_shape.text.strip():
+            raw = title_shape.text.strip()
+            if not _SLIDE_MARKER_RE.match(raw):
+                slide_title = raw
+
+        for shape in slide.shapes:
+            # Extract embedded images
+            try:
+                if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+                    image = shape.image
+                    ext = image.ext or "png"
+                    img_name = f"{uuid4().hex}.{ext}"
+                    dest = MATERIAL_IMAGE_DIR / img_name
+                    with open(dest, "wb") as fh:
+                        fh.write(image.blob)
+                    image_urls.append(f"/static/material_images/{img_name}")
+                    continue
+            except Exception:
+                pass
+
+            if not hasattr(shape, "text") or not shape.text.strip():
+                continue
+
+            raw_text = shape.text.strip()
+
+            # Skip slide-marker strings
+            if _SLIDE_MARKER_RE.match(raw_text):
+                continue
+
+            # Skip title shape — already captured above
+            if shape == title_shape:
+                continue
+
+            # Detect badge: "1. Julian Banzon" pattern (short name labels only)
+            if _BADGE_RE.match(raw_text) and not badge_label:
+                lines = [l.strip() for l in raw_text.splitlines() if l.strip()]
+                first_line = lines[0]
+                # Only treat as badge if it's short (≤6 words) — not a full sentence
+                if len(first_line.split()) <= 6:
+                    badge_label = first_line
+                    if len(lines) > 1:
+                        paragraphs.extend(lines[1:])
+                    continue
+                # Otherwise it's a paragraph
+                paragraphs.extend(lines)
+                continue
+
+            # General text — split into lines
+            lines = [l.strip() for l in raw_text.splitlines() if l.strip()]
+            paragraphs.extend(lines)
+
+        parsed_slides.append({
+            "slide_title": slide_title,
+            "badge": badge_label,
+            "paragraphs": paragraphs,
+            "image_urls": image_urls,
+        })
+
+    groups = _group_pptx_slides(parsed_slides)
+    if not groups:
+        return []
+
+    topics: list[dict] = []
+    seen_keys: set[str] = set()
+
+    for group in groups:
+        topic_title = group["badge"] or group["title"] or f"Topic {len(topics) + 1}"
+
+        # Deduplicate by normalised title
+        key = re.sub(r"[^a-z0-9]", "", topic_title.lower())
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+
+        content_data = {
+            "type": "pptx_slide",
+            "badge": group["badge"] or "",
+            "paragraphs": group["paragraphs"],
+            "image_urls": group["image_urls"],
+        }
+
+        plain_summary = " ".join(group["paragraphs"])[:300]
+
+        topics.append({
+            "title": topic_title[:160],
+            "description": plain_summary or topic_title,
+            "content": json.dumps(content_data, ensure_ascii=False),
+            "image_url": group["image_urls"][0] if group["image_urls"] else None,
+            "page_image_urls": [],
+        })
+
+    if not topics:
+        return []
+
+    return topics
 
 
 def _extract_material_images(path: Path):

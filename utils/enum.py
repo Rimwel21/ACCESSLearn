@@ -51,6 +51,10 @@ class AuditActionEnum(str, Enum):
     deactivated = "deactivated"
     hard_deleted = "hard_deleted"
     bulk_action = "bulk_action"
+    logged_in = "logged_in"
+    logged_out = "logged_out"
+    submitted_quiz = "submitted_quiz"
+    completed_topic = "completed_topic"
 
 class NotificationCategoryEnum(str, Enum):
     student = "student"

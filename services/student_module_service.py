@@ -306,6 +306,23 @@ def update_topic_progress(request: Request, module_id: int, topic_id: int, statu
 
     if status_value == "completed":
         progress.completed_at = utc_now()
+        try:
+            from services.audit_service import write_log
+            from utils.enum import AuditActionEnum
+            profile = db.query(StudentProfile).filter(StudentProfile.account_id == current_user.id).first()
+            s_name = profile.name if profile else (current_user.username or f"Student #{current_user.id}")
+            write_log(
+                db,
+                module="Learning Content",
+                action=AuditActionEnum.completed_topic,
+                actor_id=current_user.id,
+                actor_role=current_user.role,
+                affected_record=f"{s_name} - {topic.title}",
+                reason=f"Student completed topic '{topic.title}'",
+                request=request
+            )
+        except Exception:
+            pass
 
     db.commit()
     return get_module_progress(request, module_id, db, current_user)
@@ -434,6 +451,24 @@ def submit_assessment_progress(
     else:
         _complete_assessment_progress(progress, assessment, answers, "manual")
     db.commit()
+
+    try:
+        from services.audit_service import write_log
+        from utils.enum import AuditActionEnum
+        profile = db.query(StudentProfile).filter(StudentProfile.account_id == current_user.id).first()
+        s_name = profile.name if profile else (current_user.username or f"Student #{current_user.id}")
+        write_log(
+            db,
+            module="Quiz & Assessment",
+            action=AuditActionEnum.submitted_quiz,
+            actor_id=current_user.id,
+            actor_role=current_user.role,
+            affected_record=f"{s_name} - {assessment.title} ({progress.score}/{progress.total})",
+            reason=f"Student submitted assessment '{assessment.title}'",
+            request=request
+        )
+    except Exception:
+        pass
 
     return {
         "score": progress.score or 0,

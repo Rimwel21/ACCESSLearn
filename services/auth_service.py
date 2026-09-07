@@ -195,21 +195,38 @@ def user_login(request: Request, user: AccountLogin, response: Response, db: Ses
         max_age=7 * 24 * 60 * 60,
         path="/api/refresh"
     )
-    
-    profile_completed = False
+    user_display_name = db_account.username or db_account.email or f"User #{db_account.id}"
 
     # Student check if profile exists
     if db_account.role == RoleEnum.student:
         profile = db.query(StudentProfile).filter(StudentProfile.account_id == db_account.id).first()
-
-        # chinecheck nito si user na nag lologin kung meron nabang profile
         profile_completed = profile is not None
+        if profile and profile.name:
+            user_display_name = profile.name
 
     # check teacher profile if exists
     if db_account.role == RoleEnum.teacher:
         profile = db.query(TeacherProfile).filter(TeacherProfile.account_id == db_account.id).first()
-
         profile_completed = profile is not None
+        if profile and profile.name:
+            user_display_name = profile.name
+
+    # Write audit log for login
+    try:
+        from services.audit_service import write_log
+        from utils.enum import AuditActionEnum
+        write_log(
+            db,
+            module="Authentication",
+            action=AuditActionEnum.logged_in,
+            actor_id=db_account.id,
+            actor_role=db_account.role,
+            affected_record=user_display_name,
+            reason=f"{db_account.role.value.capitalize()} logged in successfully",
+            request=request
+        )
+    except Exception:
+        pass
         
     return {
         "access_token": access_token,
