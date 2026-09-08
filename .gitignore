@@ -25,4 +25,5 @@ python_seed.py
 
 # generated learning-material artifacts
 static/pdf_pages/
+static/material_images/*
 uploads/learning_materials/
