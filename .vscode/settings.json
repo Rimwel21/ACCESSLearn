@@ -4,5 +4,10 @@
     "C:\\Users\\Denmhar\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages"
   ],
   "pylance.languageServer": "Pylance",
-  "python.languageServer": "Pylance"
+  "python.languageServer": "Pylance",
+  "cSpell.words": [
+    "Dela",
+    "SIGNHEAR",
+    "signhear"
+  ]
 }
