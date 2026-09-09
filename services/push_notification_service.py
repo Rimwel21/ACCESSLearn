@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from datetime import timedelta
 import json
-import os
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from core.config import settings
 from models.accounts import Accounts
 from models.push_notification import DeadlineNotificationLog, PushSubscription
 from models.student_profile import StudentProfile
@@ -22,8 +22,8 @@ REMINDER_DAYS = (2, 1)
 
 
 def push_config() -> dict[str, str | bool | None]:
-    public_key = os.getenv("VAPID_PUBLIC_KEY")
-    private_key = os.getenv("VAPID_PRIVATE_KEY")
+    public_key = settings.VAPID_PUBLIC_KEY
+    private_key = settings.VAPID_PRIVATE_KEY
     return {
         "enabled": bool(public_key and private_key),
         "public_key": public_key,
@@ -178,8 +178,8 @@ def send_push_to_accounts(
     body: str,
     url: str,
 ) -> int:
-    private_key = os.getenv("VAPID_PRIVATE_KEY")
-    subject = os.getenv("VAPID_SUBJECT", "mailto:admin@signhear.local")
+    private_key = settings.VAPID_PRIVATE_KEY
+    subject = settings.VAPID_SUBJECT or "mailto:admin@signhear.local"
     if not private_key or not account_ids:
         return 0
 
