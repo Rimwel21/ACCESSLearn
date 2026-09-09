@@ -13,6 +13,7 @@ from models.learning_topic import LearningTopic
 from models.teacher_class import TeacherClass
 from models.teacher_module import TeacherModule
 from schemas.teacher_module_schema import TeacherModuleCreate, TeacherModuleUpdate
+from services.push_notification_service import notify_module_created, notify_module_updated
 from utils.enum import RoleEnum
 from utils.options import ALLOWED_LEARNING_WEEKS, ALLOWED_MODULE_CONTENT_TYPES
 
@@ -120,6 +121,7 @@ def create_teacher_module(request: Request, module: TeacherModuleCreate, db: Ses
     db.refresh(new_module)
     _replace_generated_topics(db, new_module, _build_fallback_text(new_module.title, new_module.description, new_module.file_name), [])
     db.refresh(new_module)
+    notify_module_created(db, new_module)
 
     return new_module
 
@@ -174,6 +176,7 @@ async def create_teacher_module_upload(
             saved_path.unlink()
         raise
     db.refresh(new_module)
+    notify_module_created(db, new_module)
 
     return new_module
 
@@ -226,6 +229,7 @@ def update_teacher_module(request: Request, module_id: int, update: TeacherModul
         if not module.topics:
             _replace_generated_topics(db, module, _build_fallback_text(module.title, module.description, module.file_name), [])
             db.refresh(module)
+    notify_module_updated(db, module)
 
     return module
 
@@ -273,6 +277,8 @@ async def replace_teacher_module_file(request: Request, module_id: int, material
 
     if old_path and old_path.exists() and old_path != saved_path:
         old_path.unlink()
+
+    notify_module_updated(db, module)
 
     return module
 

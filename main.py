@@ -1,3 +1,5 @@
+import asyncio
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -17,6 +19,7 @@ from routes.student_module_route import deadlines_router as student_deadlines
 from routes.student_module_route import router as student_modules
 from routes.handsign_route import router as handsign_router
 from routes.admin_create_section_route import router as section_create
+from routes.push_notification_route import router as push_notifications
 from core.handsign_config import get_handsign_settings
 from services.handsign.prediction_service import PredictionService
 from services.schema_maintenance import ensure_academic_tables
@@ -106,11 +109,31 @@ app.include_router(handsign_router)
 app.include_router(otp_router)
 app.include_router(admin_approval)
 app.include_router(section_create)
+app.include_router(push_notifications)
 
 
 @app.on_event("startup")
 def ensure_database_schema():
     ensure_academic_tables()
+
+
+@app.on_event("startup")
+async def start_deadline_notification_scheduler():
+    async def reminder_loop():
+        from database.connection import SessionLocal
+        from services.push_notification_service import send_due_soon_deadline_notifications
+
+        while True:
+            db = SessionLocal()
+            try:
+                send_due_soon_deadline_notifications(db)
+            except Exception as exc:
+                print(f"WARNING: Deadline notification check failed: {exc}")
+            finally:
+                db.close()
+            await asyncio.sleep(6 * 60 * 60)
+
+    app.state.deadline_notification_task = asyncio.create_task(reminder_loop())
 
 @app.on_event("startup")
 def load_handsign_model():
@@ -129,6 +152,10 @@ def close_handsign_model():
             service.close()
         except Exception:
             pass
+
+    task = getattr(app.state, "deadline_notification_task", None)
+    if task is not None:
+        task.cancel()
 @app.get("/")
 def root():
     return{"message": "FastAPI running on Port 8000..."}

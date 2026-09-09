@@ -14,5 +14,6 @@ from models.teacher_grade_handles import TeacherGradeHandles
 from models.teacher_module import TeacherModule
 from models.teacher_profile import TeacherProfile
 from models.teacher_section_assignments import TeacherSectionAssignment
+from models.push_notification import DeadlineNotificationLog, PushSubscription
 
 from models.handsign_tutorial_practice import HandsignTutorialPractice

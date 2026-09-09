@@ -9,6 +9,7 @@ from models.teacher_assessment import TeacherAssessment
 from models.teacher_class import TeacherClass
 from models.teacher_module import TeacherModule
 from schemas.teacher_assessment_schema import TeacherAssessmentCreate, TeacherAssessmentUpdate
+from services.push_notification_service import notify_assessment_created
 from utils.enum import RoleEnum
 from utils.options import ALLOWED_LEARNING_WEEKS
 
@@ -69,6 +70,7 @@ def create_teacher_assessment(request: Request, assessment: TeacherAssessmentCre
     db.add(new_assessment)
     db.commit()
     db.refresh(new_assessment)
+    notify_assessment_created(db, new_assessment)
 
     return new_assessment
 

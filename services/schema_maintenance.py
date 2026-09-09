@@ -8,6 +8,7 @@ from models.accounts import Accounts  # noqa: F401 - register audit log account 
 from models.audit_log import AuditLog  # noqa: F401 - register mapper relationships during startup
 from models.HI_sections import HI_SECTIONS
 from models.grade_levels import GradeLevels
+from models.push_notification import DeadlineNotificationLog, PushSubscription
 from models.teacher_grade_handles import TeacherGradeHandles
 from utils.enum import AccountStatusEnum, AuditActionEnum, SectionStatusEnum
 
@@ -32,6 +33,7 @@ def ensure_academic_tables() -> None:
     _ensure_audit_log_schema()
     _ensure_teacher_grade_handles_schema()
     _ensure_teacher_assessments_schema()
+    _ensure_push_notification_schema()
     _ensure_student_profile_registration_schema()
     _ensure_hi_sections_teacher_id()
     _seed_default_academic_options()
@@ -95,6 +97,16 @@ def _ensure_audit_log_schema() -> None:
     inspector = inspect(engine)
     if not inspector.has_table(AuditLog.__tablename__):
         AuditLog.__table__.create(bind=engine, checkfirst=True)
+
+
+def _ensure_push_notification_schema() -> None:
+    inspector = inspect(engine)
+    if not inspector.has_table(PushSubscription.__tablename__):
+        PushSubscription.__table__.create(bind=engine, checkfirst=True)
+
+    inspector = inspect(engine)
+    if not inspector.has_table(DeadlineNotificationLog.__tablename__):
+        DeadlineNotificationLog.__table__.create(bind=engine, checkfirst=True)
 
 
 def _seed_default_academic_options() -> None:
