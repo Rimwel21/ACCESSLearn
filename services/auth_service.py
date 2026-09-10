@@ -196,6 +196,7 @@ def user_login(request: Request, user: AccountLogin, response: Response, db: Ses
         path="/api/refresh"
     )
     user_display_name = db_account.username or db_account.email or f"User #{db_account.id}"
+    profile_completed = True
 
     # Student check if profile exists
     if db_account.role == RoleEnum.student:
