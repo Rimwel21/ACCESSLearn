@@ -2,6 +2,7 @@ from fastapi import HTTPException, Request, status
 import re
 from sqlalchemy.orm import Session
 from models.accounts import Accounts
+from models.assessment_retake_request import AssessmentRetakeRequest
 from models.learning_topic import LearningTopic
 from models.student_profile import StudentProfile
 from models.student_quiz_progress import StudentQuizProgress
@@ -12,6 +13,7 @@ from schemas.teacher_assessment_schema import TeacherAssessmentCreate, TeacherAs
 from services.push_notification_service import notify_assessment_created
 from utils.enum import RoleEnum
 from utils.options import ALLOWED_LEARNING_WEEKS
+from utils.utc_now import utc_now
 
 
 def _ensure_teacher(current_user: Accounts):
@@ -123,6 +125,81 @@ def delete_teacher_assessment(request: Request, assessment_id: int, db: Session,
     return {"detail": "Assessment deleted successfully"}
 
 
+def list_retake_requests(
+    request: Request,
+    db: Session,
+    current_user: Accounts,
+    status_filter: str | None = None,
+    assessment_type: str | None = None,
+):
+    _ensure_teacher(current_user)
+    query = (
+        db.query(AssessmentRetakeRequest, TeacherAssessment, StudentProfile)
+        .join(TeacherAssessment, TeacherAssessment.id == AssessmentRetakeRequest.assessment_id)
+        .outerjoin(StudentProfile, StudentProfile.account_id == AssessmentRetakeRequest.student_id)
+        .filter(AssessmentRetakeRequest.teacher_id == current_user.id)
+        .order_by(AssessmentRetakeRequest.created_at.desc())
+    )
+    if status_filter and status_filter != "all":
+        query = query.filter(AssessmentRetakeRequest.status == status_filter)
+    if assessment_type in {"quiz", "activity"}:
+        query = query.filter(TeacherAssessment.assessment_type == assessment_type)
+
+    rows = query.all()
+    return [
+        {
+            "id": retake.id,
+            "assessment_id": retake.assessment_id,
+            "assessment_title": assessment.title,
+            "assessment_type": assessment.assessment_type,
+            "student_id": retake.student_id,
+            "student_name": student.name if student else f"Student #{retake.student_id}",
+            "status": retake.status,
+            "reason": retake.reason,
+            "request_type": retake.request_type,
+            "created_at": retake.created_at,
+            "reviewed_at": retake.reviewed_at,
+        }
+        for retake, assessment, student in rows
+    ]
+
+
+def review_retake_request(request: Request, retake_id: int, action: str, db: Session, current_user: Accounts):
+    _ensure_teacher(current_user)
+    if action not in {"approved", "rejected"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Action must be approved or rejected")
+
+    retake = db.query(AssessmentRetakeRequest).filter(
+        AssessmentRetakeRequest.id == retake_id,
+        AssessmentRetakeRequest.teacher_id == current_user.id,
+    ).first()
+    if not retake:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Retake request not found")
+    if retake.status != "pending":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Retake request has already been reviewed")
+
+    db.query(AssessmentRetakeRequest).filter(
+        AssessmentRetakeRequest.id != retake.id,
+        AssessmentRetakeRequest.student_id == retake.student_id,
+        AssessmentRetakeRequest.assessment_id == retake.assessment_id,
+        AssessmentRetakeRequest.status == action,
+    ).update({"status": "superseded"}, synchronize_session=False)
+
+    retake.status = action
+    retake.reviewed_by = current_user.id
+    retake.reviewed_at = utc_now()
+
+    reset_count = 0
+    if action == "approved":
+        reset_count = db.query(StudentQuizProgress).filter(
+            StudentQuizProgress.student_id == retake.student_id,
+            StudentQuizProgress.assessment_id == retake.assessment_id,
+        ).delete(synchronize_session=False)
+
+    db.commit()
+    return {"detail": f"Retake request {action}", "reset_count": reset_count}
+
+
 def get_teacher_assessment(request: Request, assessment_id: int, db: Session, current_user: Accounts):
     _ensure_teacher(current_user)
     assessment = db.query(TeacherAssessment).filter(
@@ -135,6 +212,7 @@ def get_teacher_assessment(request: Request, assessment_id: int, db: Session, cu
 
 
 def _validate_module_topic(module_id: int | None, topic_id: int | None, db: Session, current_user: Accounts):
+    module = None
     if module_id is not None:
         module = db.query(TeacherModule).filter(
             TeacherModule.id == module_id,
@@ -156,6 +234,7 @@ def _validate_module_topic(module_id: int | None, topic_id: int | None, db: Sess
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Topic not found")
         if module_id is not None and topic.module_id != module_id:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Topic does not belong to the selected module")
+    return module
 
 
 def _validate_week(week: str | None):
@@ -237,10 +316,12 @@ def _validate_assignment_values(
     if not existing_class:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Class not found")
 
-    if module_id is None and topic_id is None:
-        return
+    if module_id is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Select a learning material for the quiz")
 
-    _validate_module_topic(module_id, topic_id, db, current_user)
+    module = _validate_module_topic(module_id, topic_id, db, current_user)
+    if module.class_id != class_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Selected learning material does not belong to the target class")
 
 
 def _assessment_with_submissions(assessment: TeacherAssessment, db: Session):

@@ -12,6 +12,7 @@ from services.student_module_service import (
     list_upcoming_deadlines,
     list_student_activities,
     list_student_modules,
+    request_assessment_retake,
     save_quiz_answers,
     start_quiz_progress,
     submit_assessment_progress,
@@ -28,6 +29,10 @@ class ProgressUpdate(BaseModel):
 
 class QuizSubmit(BaseModel):
     answers: dict = {}
+
+
+class RetakeRequestBody(BaseModel):
+    reason: str | None = None
 
 
 router = APIRouter(prefix="/student/modules", tags=["Student Modules"])
@@ -60,6 +65,24 @@ def submit_student_activity_route(
         request=request,
         activity_id=activity_id,
         answers=payload.answers,
+        db=db,
+        current_user=current_user,
+    )
+
+
+@activities_router.post("/{activity_id}/retake-request")
+@limiter.limit("10/minute")
+def request_activity_retake_route(
+    request: Request,
+    activity_id: int,
+    payload: RetakeRequestBody,
+    db: Session = Depends(get_db),
+    current_user: Accounts = Depends(get_current_user),
+):
+    return request_assessment_retake(
+        request=request,
+        assessment_id=activity_id,
+        reason=payload.reason,
         db=db,
         current_user=current_user,
     )
@@ -168,6 +191,26 @@ def save_quiz_answers_route(
         module_id=module_id,
         quiz_id=quiz_id,
         answers=payload.answers,
+        db=db,
+        current_user=current_user,
+    )
+
+
+@router.post("/{module_id}/quizzes/{quiz_id}/retake-request")
+@limiter.limit("10/minute")
+def request_quiz_retake_route(
+    request: Request,
+    module_id: int,
+    quiz_id: int,
+    payload: RetakeRequestBody,
+    db: Session = Depends(get_db),
+    current_user: Accounts = Depends(get_current_user),
+):
+    _ = module_id
+    return request_assessment_retake(
+        request=request,
+        assessment_id=quiz_id,
+        reason=payload.reason,
         db=db,
         current_user=current_user,
     )

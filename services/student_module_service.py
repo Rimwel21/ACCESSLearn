@@ -3,6 +3,7 @@ from pathlib import Path
 from fastapi import HTTPException, Request, status
 from sqlalchemy.orm import Session, joinedload
 from models.accounts import Accounts
+from models.assessment_retake_request import AssessmentRetakeRequest
 from models.learning_topic import LearningTopic
 from models.student_quiz_progress import StudentQuizProgress
 from models.student_progress import StudentTopicProgress
@@ -40,7 +41,7 @@ def list_student_modules(request: Request, db: Session, current_user: Accounts):
         .all()
     )
     _ensure_topics(db, modules)
-    return modules
+    return [_module_to_student_dict(module, db, current_user) for module in modules]
 
 
 def list_upcoming_deadlines(request: Request, db: Session, current_user: Accounts):
@@ -172,6 +173,48 @@ def get_student_activity(request: Request, activity_id: int, db: Session, curren
     return _assessment_to_dict(activity, db, current_user)
 
 
+def request_assessment_retake(
+    request: Request,
+    assessment_id: int,
+    reason: str | None,
+    db: Session,
+    current_user: Accounts,
+):
+    _ensure_student(current_user)
+    assessment = db.query(TeacherAssessment).filter(TeacherAssessment.id == assessment_id).first()
+    if not assessment:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assessment not found")
+
+    if assessment.assessment_type == "activity":
+        get_student_activity(request, assessment_id, db, current_user)
+    else:
+        _ensure_enrolled_assessment(assessment, db, current_user)
+
+    eligibility = _retake_eligibility(assessment, db, current_user)
+    if not eligibility["eligible"]:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Retake is only available for failed or missed-deadline assessments")
+
+    existing = db.query(AssessmentRetakeRequest).filter(
+        AssessmentRetakeRequest.student_id == current_user.id,
+        AssessmentRetakeRequest.assessment_id == assessment.id,
+        AssessmentRetakeRequest.status == "pending",
+    ).first()
+    if existing:
+        return {"detail": "Retake request already pending", "status": existing.status}
+
+    retake_request = AssessmentRetakeRequest(
+        student_id=current_user.id,
+        assessment_id=assessment.id,
+        teacher_id=assessment.teacher_id,
+        status="pending",
+        reason=reason,
+        request_type=eligibility["reason"],
+    )
+    db.add(retake_request)
+    db.commit()
+    return {"detail": "Retake request sent", "status": retake_request.status}
+
+
 def get_student_module(request: Request, module_id: int, db: Session, current_user: Accounts):
     _ensure_student(current_user)
     profile = _get_student_profile(db, current_user)
@@ -211,7 +254,7 @@ def get_student_module(request: Request, module_id: int, db: Session, current_us
         "created_at": module.created_at,
         "updated_at": module.updated_at,
         "topics": module.topics,
-        "assessments": [_assessment_to_dict(assessment, db, current_user) for assessment in module.assessments],
+        "assessments": [_assessment_to_dict(assessment, db, current_user) for assessment in _module_assessments(module, db)],
     }
 
 
@@ -225,14 +268,7 @@ def get_module_progress(request: Request, module_id: int, db: Session, current_u
         .order_by(LearningTopic.sort_order.asc(), LearningTopic.id.asc())
         .all()
     ]
-    quiz_ids = [
-        row.id for row in db.query(TeacherAssessment.id)
-        .filter(
-            TeacherAssessment.module_id == module_id,
-            TeacherAssessment.assessment_type == "quiz",
-        )
-        .all()
-    ]
+    quiz_ids = _quiz_ids_for_module(module_id, db)
     completed_ids = [
         row.topic_id for row in db.query(StudentTopicProgress.topic_id)
         .filter(
@@ -345,6 +381,7 @@ def start_quiz_progress(request: Request, module_id: int, quiz_id: int, db: Sess
     _ensure_enrolled_module(module_id, db, current_user)
     assessment = _get_student_assessment(module_id, quiz_id, db, "quiz")
     _ensure_quiz_unlocked(module_id, db, current_user)
+    _ensure_assessment_open_for_student(assessment, db, current_user)
 
     progress = _get_or_create_assessment_progress(current_user.id, module_id, quiz_id, db)
     if progress.status == "completed":
@@ -403,6 +440,7 @@ def save_quiz_answers(request: Request, module_id: int, quiz_id: int, answers: d
     _ensure_enrolled_module(module_id, db, current_user)
     assessment = _get_student_assessment(module_id, quiz_id, db, "quiz")
     _ensure_quiz_unlocked(module_id, db, current_user)
+    _ensure_assessment_open_for_student(assessment, db, current_user)
 
     progress = _get_assessment_progress(current_user.id, quiz_id, db)
     _ensure_quiz_started(assessment, progress)
@@ -433,6 +471,7 @@ def submit_assessment_progress(
 
     if assessment.assessment_type == "quiz":
         _ensure_quiz_unlocked(module_id, db, current_user)
+    _ensure_assessment_open_for_student(assessment, db, current_user)
 
     progress = _get_assessment_progress(current_user.id, assessment_id, db) if assessment.assessment_type == "quiz" else _get_or_create_assessment_progress(current_user.id, module_id, assessment_id, db)
     if assessment.assessment_type == "quiz":
@@ -481,6 +520,9 @@ def submit_assessment_progress(
 def submit_class_activity_progress(request: Request, activity_id: int, answers: dict, db: Session, current_user: Accounts):
     _ensure_student(current_user)
     activity = get_student_activity(request, activity_id, db, current_user)
+    assessment = db.query(TeacherAssessment).filter(TeacherAssessment.id == activity_id).first()
+    if assessment:
+        _ensure_assessment_open_for_student(assessment, db, current_user)
     progress = db.query(StudentQuizProgress).filter(
         StudentQuizProgress.student_id == current_user.id,
         StudentQuizProgress.assessment_id == activity_id,
@@ -521,14 +563,26 @@ def submit_class_activity_progress(request: Request, activity_id: int, answers: 
 
 
 def _get_student_assessment(module_id: int, assessment_id: int, db: Session, assessment_type: str | None = None):
+    module = db.query(TeacherModule).filter(TeacherModule.id == module_id).first()
+    if not module:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assessment not found")
+
     assessment_filters = [
         TeacherAssessment.id == assessment_id,
-        TeacherAssessment.module_id == module_id,
     ]
     if assessment_type:
         assessment_filters.append(TeacherAssessment.assessment_type == assessment_type)
 
-    assessment = db.query(TeacherAssessment).filter(*assessment_filters).first()
+    assessment = db.query(TeacherAssessment).filter(
+        *assessment_filters,
+        (
+            (TeacherAssessment.module_id == module_id)
+            | (
+                (TeacherAssessment.module_id.is_(None))
+                & (TeacherAssessment.class_id == module.class_id)
+            )
+        )
+    ).first()
     if not assessment:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assessment not found")
     return assessment
@@ -568,6 +622,64 @@ def _get_assessment_progress(student_id: int, assessment_id: int, db: Session):
     if not progress:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Start the quiz before submitting answers")
     return progress
+
+
+def _latest_retake_request(assessment: TeacherAssessment, db: Session, current_user: Accounts):
+    return db.query(AssessmentRetakeRequest).filter(
+        AssessmentRetakeRequest.student_id == current_user.id,
+        AssessmentRetakeRequest.assessment_id == assessment.id,
+    ).order_by(AssessmentRetakeRequest.created_at.desc()).first()
+
+
+def _has_approved_retake(assessment: TeacherAssessment, db: Session, current_user: Accounts):
+    latest = _latest_retake_request(assessment, db, current_user)
+    return bool(latest and latest.status == "approved")
+
+
+def _ensure_assessment_open_for_student(assessment: TeacherAssessment, db: Session, current_user: Accounts):
+    if _is_past_due(assessment.due_at) and not _has_approved_retake(assessment, db, current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="The deadline has passed. Request a retake and wait for teacher approval.",
+        )
+
+
+def _retake_eligibility(assessment: TeacherAssessment, db: Session, current_user: Accounts):
+    progress = db.query(StudentQuizProgress).filter(
+        StudentQuizProgress.student_id == current_user.id,
+        StudentQuizProgress.assessment_id == assessment.id,
+    ).first()
+    missed_deadline = bool(
+        _is_past_due(assessment.due_at)
+        and (not progress or progress.status != "completed")
+    )
+    failed_low_score = bool(
+        progress
+        and progress.status == "completed"
+        and progress.total
+        and (progress.score or 0) < (progress.total / 2)
+    )
+    if failed_low_score:
+        return {"eligible": True, "reason": "failed_low_score"}
+    if missed_deadline:
+        return {"eligible": True, "reason": "missed_deadline"}
+    return {"eligible": False, "reason": None}
+
+
+def _retake_info(assessment: TeacherAssessment, db: Session | None, current_user: Accounts | None):
+    if db is None or current_user is None:
+        return {
+            "student_retake_eligible": False,
+            "student_retake_reason": None,
+            "student_retake_status": None,
+        }
+    eligibility = _retake_eligibility(assessment, db, current_user)
+    retake_request = _latest_retake_request(assessment, db, current_user)
+    return {
+        "student_retake_eligible": eligibility["eligible"],
+        "student_retake_reason": eligibility["reason"],
+        "student_retake_status": retake_request.status if retake_request else None,
+    }
 
 
 def _ensure_quiz_started(assessment: TeacherAssessment, progress: StudentQuizProgress):
@@ -611,6 +723,15 @@ def _remaining_seconds(progress: StudentQuizProgress):
     return max(0, int((progress.expires_at - utc_now()).total_seconds()))
 
 
+def _is_past_due(value):
+    if not value:
+        return False
+    now = utc_now()
+    if value.tzinfo is None:
+        now = now.replace(tzinfo=None)
+    return value < now
+
+
 def _get_student_profile(db: Session, current_user: Accounts):
     return (
         db.query(StudentProfile)
@@ -641,6 +762,83 @@ def _ensure_enrolled_module(module_id: int, db: Session, current_user: Accounts)
     )
     if not module:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Module not found")
+
+
+def _ensure_enrolled_assessment(assessment: TeacherAssessment, db: Session, current_user: Accounts):
+    if assessment.module_id is not None:
+        _ensure_enrolled_module(assessment.module_id, db, current_user)
+        return
+    profile = _get_student_profile(db, current_user)
+    if not profile or not profile.grade_level or not profile.section:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quiz not found")
+    teacher_class = db.query(TeacherClass.id).filter(
+        TeacherClass.id == assessment.class_id,
+        TeacherClass.grade_level_id == profile.grade_level_id,
+        TeacherClass.section_id == profile.section_id,
+    ).first()
+    if not teacher_class:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quiz not found")
+
+
+def _quiz_ids_for_module(module_id: int, db: Session):
+    module = db.query(TeacherModule).filter(TeacherModule.id == module_id).first()
+    if not module:
+        return []
+    include_class_quizzes = module.class_id is not None and module.id == _first_published_module_id_for_class(module.class_id, db)
+    scope_filter = TeacherAssessment.module_id == module_id
+    if include_class_quizzes:
+        scope_filter = scope_filter | (
+            (TeacherAssessment.module_id.is_(None))
+            & (TeacherAssessment.class_id == module.class_id)
+        )
+    filters = [TeacherAssessment.assessment_type == "quiz", scope_filter]
+    return [row.id for row in db.query(TeacherAssessment.id).filter(*filters).all()]
+
+
+def _first_published_module_id_for_class(class_id: int | None, db: Session):
+    if class_id is None:
+        return None
+    row = db.query(TeacherModule.id).filter(
+        TeacherModule.class_id == class_id,
+        TeacherModule.status == "Published",
+    ).order_by(TeacherModule.created_at.asc(), TeacherModule.id.asc()).first()
+    return row.id if row else None
+
+
+def _module_assessments(module: TeacherModule, db: Session):
+    assessments = list(module.assessments or [])
+    first_module_id = _first_published_module_id_for_class(module.class_id, db)
+    if module.class_id is not None and module.id == first_module_id:
+        class_quizzes = db.query(TeacherAssessment).filter(
+            TeacherAssessment.assessment_type == "quiz",
+            TeacherAssessment.class_id == module.class_id,
+            TeacherAssessment.module_id.is_(None),
+        ).order_by(TeacherAssessment.created_at.asc()).all()
+        existing_ids = {assessment.id for assessment in assessments}
+        assessments.extend([quiz for quiz in class_quizzes if quiz.id not in existing_ids])
+    return assessments
+
+
+def _module_to_student_dict(module: TeacherModule, db: Session, current_user: Accounts):
+    return {
+        "id": module.id,
+        "teacher_id": module.teacher_id,
+        "class_id": module.class_id,
+        "title": module.title,
+        "description": module.description,
+        "content_type": module.content_type,
+        "week": module.week,
+        "file_name": module.file_name,
+        "file_type": module.file_type,
+        "file_size": module.file_size,
+        "status": module.status,
+        "behavior_required": module.behavior_required,
+        "due_at": module.due_at,
+        "created_at": module.created_at,
+        "updated_at": module.updated_at,
+        "topics": module.topics,
+        "assessments": [_assessment_to_dict(assessment, db, current_user) for assessment in _module_assessments(module, db)],
+    }
 
 
 def _ensure_topic_unlocked(module_id: int, topic_id: int, db: Session, current_user: Accounts):
@@ -718,6 +916,7 @@ def _assessment_to_dict(assessment: TeacherAssessment, db: Session | None = None
         "student_remaining_seconds": _remaining_seconds(progress) if progress and progress.status != "completed" else None,
         "student_submission_type": progress.submission_type if progress else None,
         "student_answers": progress.answers if progress else {},
+        **_retake_info(assessment, db, current_user),
         "created_at": assessment.created_at,
         "updated_at": assessment.updated_at,
     }

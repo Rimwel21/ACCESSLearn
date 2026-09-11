@@ -650,15 +650,21 @@ def list_teacher_student_records(
     for progress in progress_rows:
         progress_by_student.setdefault(progress.student_id, []).append(progress)
 
-    handsign_rows = (
-        db.query(HandsignTutorialPractice)
-        .filter(
-            HandsignTutorialPractice.student_id.in_(student_ids),
-            HandsignTutorialPractice.activity_id.in_(assessment_ids),
-        )
-        .order_by(HandsignTutorialPractice.completed_at.desc().nullslast())
-        .all()
-    ) if assessment_ids else []
+    handsign_rows = []
+    if assessment_ids:
+        try:
+            handsign_rows = (
+                db.query(HandsignTutorialPractice)
+                .filter(
+                    HandsignTutorialPractice.student_id.in_(student_ids),
+                    HandsignTutorialPractice.activity_id.in_(assessment_ids),
+                )
+                .order_by(HandsignTutorialPractice.completed_at.desc().nullslast())
+                .all()
+            )
+        except Exception:
+            db.rollback()
+            handsign_rows = []
     handsign_by_student: dict[int, list[HandsignTutorialPractice]] = {}
     for practice in handsign_rows:
         handsign_by_student.setdefault(practice.student_id, []).append(practice)
@@ -667,7 +673,7 @@ def list_teacher_student_records(
     for student in students:
         summary = _dashboard_progress_for_student(student, classes, db, current_user)
         assessment_records = []
-        for progress in sorted(progress_by_student.get(student.account_id, []), key=lambda item: item.updated_at, reverse=True):
+        for progress in sorted(progress_by_student.get(student.account_id, []), key=lambda item: item.updated_at or item.completed_at or utc_now(), reverse=True):
             assessment = assessments_by_id.get(progress.assessment_id)
             if not assessment:
                 continue

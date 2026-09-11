@@ -1,13 +1,61 @@
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from limiter import limiter
 from models.accounts import Accounts
 from schemas.teacher_assessment_schema import TeacherAssessmentCreate, TeacherAssessmentOut, TeacherAssessmentUpdate
-from services.teacher_assessment_service import create_teacher_assessment, delete_teacher_assessment, list_teacher_assessments, update_teacher_assessment
+from services.teacher_assessment_service import (
+    create_teacher_assessment,
+    delete_teacher_assessment,
+    list_retake_requests,
+    list_teacher_assessments,
+    review_retake_request,
+    update_teacher_assessment,
+)
 from utils.dependencies import get_current_user, get_db
 
 
 router = APIRouter(prefix="/teacher/assessments", tags=["Teacher Assessments"])
+
+
+class RetakeReviewBody(BaseModel):
+    action: str
+
+
+@router.get("/retake-requests")
+@limiter.limit("20/minute")
+def list_retake_requests_route(
+    request: Request,
+    status_filter: str | None = Query("pending", alias="status"),
+    assessment_type: str | None = Query(None),
+    db: Session = Depends(get_db),
+    current_user: Accounts = Depends(get_current_user),
+):
+    return list_retake_requests(
+        request=request,
+        db=db,
+        current_user=current_user,
+        status_filter=status_filter,
+        assessment_type=assessment_type,
+    )
+
+
+@router.patch("/retake-requests/{retake_id}")
+@limiter.limit("20/minute")
+def review_retake_request_route(
+    request: Request,
+    retake_id: int,
+    body: RetakeReviewBody,
+    db: Session = Depends(get_db),
+    current_user: Accounts = Depends(get_current_user),
+):
+    return review_retake_request(
+        request=request,
+        retake_id=retake_id,
+        action=body.action,
+        db=db,
+        current_user=current_user,
+    )
 
 
 @router.get("/{assessment_type}", response_model=list[TeacherAssessmentOut])

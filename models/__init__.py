@@ -1,4 +1,5 @@
 from models.accounts import Accounts
+from models.assessment_retake_request import AssessmentRetakeRequest
 from models.audit_log import AuditLog
 from models.email_otp import EmailOTP
 from models.file_upload import FileUpload

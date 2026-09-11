@@ -84,6 +84,9 @@ class TeacherAssessmentOut(TeacherAssessmentBase):
     student_remaining_seconds: int | None = None
     student_submission_type: str | None = None
     student_answers: dict = Field(default_factory=dict)
+    student_retake_eligible: bool = False
+    student_retake_reason: str | None = None
+    student_retake_status: str | None = None
     submissions_count: int = 0
     submissions: list[ActivitySubmissionOut] = Field(default_factory=list)
     created_at: datetime
