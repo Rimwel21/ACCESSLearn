@@ -8,6 +8,7 @@ from models.learning_topic import LearningTopic
 from models.student_progress import StudentTopicProgress
 from models.student_profile import StudentProfile
 from models.student_quiz_progress import StudentQuizProgress
+from models.assessment_retake_request import AssessmentRetakeRequest
 from models.teacher_assessment import TeacherAssessment
 from models.teacher_class import TeacherClass
 from models.teacher_module import TeacherModule
@@ -669,6 +670,24 @@ def list_teacher_student_records(
     for practice in handsign_rows:
         handsign_by_student.setdefault(practice.student_id, []).append(practice)
 
+    retake_rows = []
+    if assessment_ids and student_ids:
+        retake_rows = (
+            db.query(AssessmentRetakeRequest)
+            .filter(
+                AssessmentRetakeRequest.teacher_id == current_user.id,
+                AssessmentRetakeRequest.student_id.in_(student_ids),
+                AssessmentRetakeRequest.assessment_id.in_(assessment_ids),
+            )
+            .order_by(AssessmentRetakeRequest.created_at.desc())
+            .all()
+        )
+    retake_by_student_assessment: dict[tuple[int, int], AssessmentRetakeRequest] = {}
+    for retake in retake_rows:
+        key = (retake.student_id, retake.assessment_id)
+        if key not in retake_by_student_assessment:
+            retake_by_student_assessment[key] = retake
+
     records = []
     for student in students:
         summary = _dashboard_progress_for_student(student, classes, db, current_user)
@@ -682,6 +701,7 @@ def list_teacher_student_records(
                 for question in (assessment.questions or [])
                 if str(question.get('answer') or '').strip()
             ]
+            retake_access = retake_by_student_assessment.get((student.account_id, assessment.id))
             assessment_records.append({
                 'assessment_id': assessment.id,
                 'title': assessment.title,
@@ -693,6 +713,7 @@ def list_teacher_student_records(
                 'answers': progress.answers or {},
                 'completed_at': progress.completed_at,
                 'submission_type': progress.submission_type,
+                'retake_status': retake_access.status if retake_access else None,
             })
 
         if status_filter and status_filter != 'all':

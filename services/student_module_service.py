@@ -489,6 +489,7 @@ def submit_assessment_progress(
         _complete_assessment_progress(progress, assessment, progress.answers or {}, "timed_out")
     else:
         _complete_assessment_progress(progress, assessment, answers, "manual")
+    _consume_approved_retake(assessment, db, current_user)
     db.commit()
 
     try:
@@ -636,11 +637,17 @@ def _has_approved_retake(assessment: TeacherAssessment, db: Session, current_use
     return bool(latest and latest.status == "approved")
 
 
+def _consume_approved_retake(assessment: TeacherAssessment, db: Session, current_user: Accounts):
+    latest = _latest_retake_request(assessment, db, current_user)
+    if latest and latest.status == "approved":
+        latest.status = "consumed"
+
+
 def _ensure_assessment_open_for_student(assessment: TeacherAssessment, db: Session, current_user: Accounts):
     if _is_past_due(assessment.due_at) and not _has_approved_retake(assessment, db, current_user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="The deadline has passed. Request a retake and wait for teacher approval.",
+            detail="The deadline has passed. Ask your teacher to grant retake access.",
         )
 
 

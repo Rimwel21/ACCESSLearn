@@ -164,6 +164,51 @@ def list_retake_requests(
     ]
 
 
+def set_student_retake_access(
+    request: Request,
+    assessment_id: int,
+    student_id: int,
+    action: str,
+    db: Session,
+    current_user: Accounts,
+):
+    _ensure_teacher(current_user)
+    if action not in {"approved", "rejected"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Action must be approved or rejected")
+
+    assessment = get_teacher_assessment(request, assessment_id, db, current_user)
+    retake = db.query(AssessmentRetakeRequest).filter(
+        AssessmentRetakeRequest.student_id == student_id,
+        AssessmentRetakeRequest.assessment_id == assessment.id,
+        AssessmentRetakeRequest.teacher_id == current_user.id,
+    ).order_by(AssessmentRetakeRequest.created_at.desc()).first()
+
+    if not retake:
+        retake = AssessmentRetakeRequest(
+            student_id=student_id,
+            assessment_id=assessment.id,
+            teacher_id=current_user.id,
+            request_type="teacher_decision",
+            reason="Teacher-controlled retake access",
+        )
+        db.add(retake)
+
+    retake.status = action
+    retake.reviewed_by = current_user.id
+    retake.reviewed_at = utc_now()
+
+    reset_count = 0
+    if action == "approved":
+        reset_count = db.query(StudentQuizProgress).filter(
+            StudentQuizProgress.student_id == student_id,
+            StudentQuizProgress.assessment_id == assessment.id,
+        ).delete(synchronize_session=False)
+
+    db.commit()
+    db.refresh(retake)
+    return {"detail": f"Retake access {action}", "status": retake.status, "reset_count": reset_count}
+
+
 def review_retake_request(request: Request, retake_id: int, action: str, db: Session, current_user: Accounts):
     _ensure_teacher(current_user)
     if action not in {"approved", "rejected"}:

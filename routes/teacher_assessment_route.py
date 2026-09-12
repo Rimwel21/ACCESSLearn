@@ -10,6 +10,7 @@ from services.teacher_assessment_service import (
     list_retake_requests,
     list_teacher_assessments,
     review_retake_request,
+    set_student_retake_access,
     update_teacher_assessment,
 )
 from utils.dependencies import get_current_user, get_db
@@ -52,6 +53,26 @@ def review_retake_request_route(
     return review_retake_request(
         request=request,
         retake_id=retake_id,
+        action=body.action,
+        db=db,
+        current_user=current_user,
+    )
+
+
+@router.patch("/{assessment_id}/students/{student_id}/retake-access")
+@limiter.limit("20/minute")
+def set_student_retake_access_route(
+    request: Request,
+    assessment_id: int,
+    student_id: int,
+    body: RetakeReviewBody,
+    db: Session = Depends(get_db),
+    current_user: Accounts = Depends(get_current_user),
+):
+    return set_student_retake_access(
+        request=request,
+        assessment_id=assessment_id,
+        student_id=student_id,
         action=body.action,
         db=db,
         current_user=current_user,
