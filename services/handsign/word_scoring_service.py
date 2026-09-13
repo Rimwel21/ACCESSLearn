@@ -3,7 +3,7 @@ from pathlib import Path
 import numpy as np
 
 from core.handsign_config import HandSignSettings, get_handsign_settings
-from utils.handsign.science_vocabulary import canonical_word
+from utils.handsign.science_vocabulary import WEEKLY_SCIENCE_SIGN_LABELS, canonical_word
 from utils.handsign.word_gesture_features import resample_sequence
 
 
@@ -13,8 +13,21 @@ def _settings(settings: HandSignSettings | None = None) -> HandSignSettings:
 
 def target_reference_paths(word: str, settings: HandSignSettings | None = None) -> list[Path]:
     config = _settings(settings)
-    word_dir = config.resolved_word_gesture_dataset_path() / canonical_word(word)
-    return sorted(word_dir.glob("*.npz"))
+    target = canonical_word(word)
+    paths: list[Path] = []
+
+    flat_dir = config.resolved_word_gesture_dataset_path() / target
+    if flat_dir.exists():
+        paths.extend(sorted(flat_dir.glob("*.npz")))
+
+    for week, labels in WEEKLY_SCIENCE_SIGN_LABELS.items():
+        if target not in labels:
+            continue
+        grouped_dir = config.resolved_word_gesture_dataset_path() / week / target
+        if grouped_dir.exists():
+            paths.extend(sorted(grouped_dir.glob("*.npz")))
+
+    return paths
 
 
 def load_target_references(word: str, settings: HandSignSettings | None = None) -> np.ndarray:

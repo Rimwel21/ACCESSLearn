@@ -1,8 +1,9 @@
 import json
+from collections import Counter
 from pathlib import Path
 
 from core.handsign_config import HandSignSettings, get_handsign_settings
-from utils.handsign.science_vocabulary import canonical_word
+from utils.handsign.science_vocabulary import WEEKLY_SCIENCE_SIGN_LABELS, canonical_word
 
 
 def _settings(settings: HandSignSettings | None = None) -> HandSignSettings:
@@ -14,11 +15,15 @@ def list_dataset_classes(settings: HandSignSettings | None = None) -> list[dict[
     if not dataset_dir.exists():
         return []
 
-    classes = []
+    counts: Counter[str] = Counter()
     for directory in sorted(path for path in dataset_dir.iterdir() if path.is_dir()):
-        sample_count = len(list(directory.glob("*.npz")))
-        classes.append({"label": directory.name, "sample_count": sample_count})
-    return classes
+        if directory.name.upper() in WEEKLY_SCIENCE_SIGN_LABELS:
+            for label_dir in sorted(path for path in directory.iterdir() if path.is_dir()):
+                counts[canonical_word(label_dir.name)] += len(list(label_dir.glob("*.npz")))
+        else:
+            counts[canonical_word(directory.name)] += len(list(directory.glob("*.npz")))
+
+    return [{"label": label, "sample_count": count} for label, count in sorted(counts.items())]
 
 
 def load_word_model_metadata(settings: HandSignSettings | None = None) -> dict | None:

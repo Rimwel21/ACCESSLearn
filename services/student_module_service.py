@@ -537,7 +537,7 @@ def submit_class_activity_progress(request: Request, activity_id: int, answers: 
     for index, question in enumerate(questions):
         expected = question.get("answer") or ""
         actual = str(answers.get(str(index), answers.get(index, "")))
-        if expected and answers_match(actual, expected):
+        if expected and _answers_match_question(question, actual, expected):
             score += 1
 
     if not progress:
@@ -712,9 +712,28 @@ def _score_answers(questions: list[dict], answers: dict):
     for index, question in enumerate(questions):
         expected = question.get("answer") or ""
         actual = str(answers.get(str(index), answers.get(index, "")))
-        if expected and answers_match(actual, expected):
+        if expected and _answers_match_question(question, actual, expected):
             score += 1
     return score
+
+
+def _answers_match_question(question: dict, actual: str, expected: str):
+    """Translate a signed choice letter before comparing it with its stored answer."""
+    question_type = question.get("question_type", "identification")
+    signed_letter = actual.strip().upper()
+
+    if question_type == "multiple_choice":
+        options = question.get("options") or []
+        option_index = ord(signed_letter) - ord("A") if len(signed_letter) == 1 and signed_letter.isalpha() else -1
+        if 0 <= option_index < len(options):
+            actual = str(options[option_index])
+    elif question_type == "true_false":
+        if signed_letter == "A":
+            actual = "True"
+        elif signed_letter == "B":
+            actual = "False"
+
+    return answers_match(actual, expected)
 
 
 def _is_time_limit_expired(assessment: TeacherAssessment, progress: StudentQuizProgress):
