@@ -6,6 +6,13 @@ from utils.options import ALLOWED_LEARNING_WEEKS
 class AssessmentQuestion(BaseModel):
     prompt: str = Field(min_length=1)
     answer: str | None = None
+    question_type: str = Field(default="identification", pattern="^(identification|multiple_choice|true_false)$")
+    options: list[str] = Field(default_factory=list, max_length=4)
+
+    @field_validator("options")
+    @classmethod
+    def validate_options(cls, value: list[str]):
+        return [option.strip() for option in value if option.strip()]
 
 
 class TeacherAssessmentBase(BaseModel):

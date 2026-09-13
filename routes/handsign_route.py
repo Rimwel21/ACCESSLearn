@@ -20,6 +20,8 @@ from schemas.handsign.tutorial import (
     SequenceScoreResponse,
     TutorialStatus,
 )
+from schemas.handsign.dataset import WordGestureSampleCreate
+from services.handsign.dataset_admin_service import admin_dataset_summary, save_word_gesture_sample, start_training
 from services.handsign.response_mapper import to_prediction_response
 from services.handsign.tutorial_service import save_practice_result, save_tutorial_video, tutorial_status
 from services.handsign.word_frame_scoring_service import score_frame_sequence
@@ -126,6 +128,35 @@ def backspace_camera_session(
 def word_gestures_summary(current_user: Accounts = Depends(get_current_user)) -> dict:
     logger.debug("Word gesture summary requested by account %s", current_user.id)
     return word_gesture_summary()
+
+
+def _ensure_admin(current_user: Accounts):
+    if current_user.role != RoleEnum.admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Administrator only")
+
+
+@router.get("/admin/dataset")
+def admin_dataset(current_user: Accounts = Depends(get_current_user)) -> dict:
+    _ensure_admin(current_user)
+    return admin_dataset_summary()
+
+
+@router.post("/admin/dataset/samples")
+def upload_admin_dataset_sample(payload: WordGestureSampleCreate, current_user: Accounts = Depends(get_current_user)) -> dict:
+    _ensure_admin(current_user)
+    try:
+        return save_word_gesture_sample(payload.label, payload.week, payload.images)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/admin/dataset/train")
+def train_admin_word_model(current_user: Accounts = Depends(get_current_user)) -> dict:
+    _ensure_admin(current_user)
+    try:
+        return start_training()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/tutorials/{word}", response_model=TutorialStatus)
