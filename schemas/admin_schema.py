@@ -57,7 +57,8 @@ class AccountListOut(BaseModel):
     username:       Optional[str]
     email:          Optional[str]
     role:           RoleEnum
-    account_status: AccountStatusEnum
+    account_status: Optional[AccountStatusEnum] = AccountStatusEnum.active
+    full_name:      Optional[str]        = None
     name:           Optional[str]        = None   # from profile
     contact_no:     Optional[str]        = None
     grade_level:    Optional[str]        = None

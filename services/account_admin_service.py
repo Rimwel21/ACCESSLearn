@@ -7,9 +7,14 @@ and list/search/filter/bulk actions on accounts.
 from __future__ import annotations
 from typing import Optional, List
 from fastapi import HTTPException, status, Request
+from sqlalchemy import desc, or_
 from sqlalchemy.orm import Session
 
 from models.accounts import Accounts
+from models.HI_sections import HI_SECTIONS
+from models.grade_levels import GradeLevels
+from models.student_profile import StudentProfile
+from models.teacher_profile import TeacherProfile
 from repositories.account_repository import AccountRepository
 from utils.enum import AccountStatusEnum, RoleEnum, AuditActionEnum, BulkActionEnum, VerificationStatus
 from services.audit_service import write_log
@@ -23,9 +28,72 @@ def list_accounts(
     page:           int                         = 1,
     per_page:       int                         = 20,
 ):
-    return AccountRepository.list_accounts(
-        db, role=role, account_status=account_status, search=search, page=page, per_page=per_page
+    q = (
+        db.query(
+            Accounts.id,
+            Accounts.username,
+            Accounts.email,
+            Accounts.role,
+            Accounts.account_status,
+            Accounts.created_at,
+            Accounts.updated_at,
+            TeacherProfile.name.label("teacher_name"),
+            TeacherProfile.contact_no.label("teacher_contact_no"),
+            StudentProfile.name.label("student_name"),
+            StudentProfile.guardians_contact_no.label("student_contact_no"),
+            GradeLevels.name.label("grade_level"),
+            HI_SECTIONS.name.label("section_name"),
+        )
+        .outerjoin(TeacherProfile, TeacherProfile.account_id == Accounts.id)
+        .outerjoin(StudentProfile, StudentProfile.account_id == Accounts.id)
+        .outerjoin(GradeLevels, GradeLevels.id == StudentProfile.grade_level_id)
+        .outerjoin(HI_SECTIONS, HI_SECTIONS.id == StudentProfile.section_id)
+        .filter(Accounts.role != RoleEnum.admin)
     )
+
+    if role:
+        q = q.filter(Accounts.role == role)
+    if account_status:
+        q = q.filter(Accounts.account_status == account_status)
+    if search:
+        term = f"%{search}%"
+        q = q.filter(
+            or_(
+                Accounts.username.ilike(term),
+                Accounts.email.ilike(term),
+                TeacherProfile.name.ilike(term),
+                StudentProfile.name.ilike(term),
+            )
+        )
+
+    total = q.count()
+    rows = (
+        q.order_by(desc(Accounts.created_at))
+        .offset((page - 1) * per_page)
+        .limit(per_page)
+        .all()
+    )
+    return total, [_account_row_item(row) for row in rows]
+
+def _account_row_item(row) -> dict:
+    name = row.teacher_name or row.student_name or row.username or row.email
+    contact_no = row.teacher_contact_no or row.student_contact_no
+    status = row.account_status or AccountStatusEnum.active
+
+    return {
+        "id": row.id,
+        "username": row.username,
+        "email": row.email,
+        "role": row.role,
+        "account_status": status,
+        "full_name": name,
+        "name": name,
+        "contact_no": contact_no,
+        "grade_level": row.grade_level,
+        "section_name": row.section_name,
+        "created_at": row.created_at,
+        "updated_at": row.updated_at,
+    }
 
 def change_account_status(
     db:                Session,
@@ -64,17 +132,23 @@ def change_account_status(
     action = action_map.get(new_status, AuditActionEnum.updated)
 
     # Status Notification Triggers for Student Approval
-    if account.role == RoleEnum.student and new_status == AccountStatusEnum.active and old_status != AccountStatusEnum.active:
+    should_send_student_approval_notifications = (
+        account.role == RoleEnum.student
+        and new_status == AccountStatusEnum.active
+        and old_status not in (AccountStatusEnum.active, AccountStatusEnum.archived)
+    )
+
+    if should_send_student_approval_notifications:
         from repositories.notification_repository import NotificationRepository
         from models.student_profile import StudentProfile
-        from models.section import Section
+        from models.HI_sections import HI_SECTIONS
         from models.notification import Notification
         from utils.enum import NotificationCategoryEnum, NotificationPriorityEnum
         from repositories.section_repository import SectionRepository
         
         profile = db.query(StudentProfile).filter(StudentProfile.account_id == account.id).first()
         if profile and profile.section_id:
-            sec = db.query(Section).filter(Section.id == profile.section_id).first()
+            sec = db.query(HI_SECTIONS).filter(HI_SECTIONS.id == profile.section_id).first()
             if sec:
                 # 1. Student Notification: Approved
                 NotificationRepository.create(db, Notification(

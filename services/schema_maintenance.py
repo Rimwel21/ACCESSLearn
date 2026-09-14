@@ -40,7 +40,14 @@ def ensure_academic_tables() -> None:
     _ensure_push_notification_schema()
     _ensure_student_profile_registration_schema()
     _ensure_hi_sections_teacher_id()
+    _ensure_account_statuses()
     _seed_default_academic_options()
+
+
+def _ensure_account_statuses() -> None:
+    with Session(engine) as db:
+        db.execute(text("UPDATE accounts SET account_status = 'active' WHERE account_status IS NULL"))
+        db.commit()
 
 
 def _ensure_hi_sections_teacher_id() -> None:
