@@ -22,6 +22,7 @@ class TeacherAssessment(Base):
     attempts_allowed = Column(Integer, default=1, nullable=False)
     shuffle_questions = Column(String(10), default="true", nullable=False)
     show_answers_after_submission = Column(String(10), default="true", nullable=False)
+    allow_text_answers = Column(String(10), default="true", nullable=False)
     questions = Column(JSON, default=list, nullable=False)
     due_at = Column(DateTime(timezone=True), nullable=True)
 

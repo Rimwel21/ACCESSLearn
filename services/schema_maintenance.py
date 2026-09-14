@@ -236,6 +236,16 @@ def _ensure_teacher_assessments_schema() -> None:
                         text("UPDATE teacher_assessments SET time_limit_seconds = :seconds WHERE id = :id"),
                         {"seconds": seconds, "id": row.id},
                     )
+        if "allow_text_answers" not in columns:
+            if is_pg:
+                connection.execute(text(
+                    "ALTER TABLE teacher_assessments "
+                    "ADD COLUMN IF NOT EXISTS allow_text_answers VARCHAR(10) DEFAULT 'true' NOT NULL"
+                ))
+            else:
+                connection.execute(text(
+                    "ALTER TABLE teacher_assessments ADD COLUMN allow_text_answers VARCHAR(10) DEFAULT 'true' NOT NULL"
+                ))
 
     _ensure_student_quiz_progress_schema()
 

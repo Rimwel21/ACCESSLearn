@@ -65,6 +65,7 @@ def create_teacher_assessment(request: Request, assessment: TeacherAssessmentCre
         attempts_allowed=assessment.attempts_allowed,
         shuffle_questions=str(assessment.shuffle_questions).lower(),
         show_answers_after_submission=str(assessment.show_answers_after_submission).lower(),
+        allow_text_answers=str(assessment.allow_text_answers).lower(),
         questions=[question.model_dump() for question in assessment.questions],
         due_at=assessment.due_at,
     )
@@ -91,7 +92,7 @@ def update_teacher_assessment(request: Request, assessment_id: int, update: Teac
         _validate_week(update_data.get("week"))
 
     for key, value in update_data.items():
-        if key in {"shuffle_questions", "show_answers_after_submission"} and isinstance(value, bool):
+        if key in {"shuffle_questions", "show_answers_after_submission", "allow_text_answers"} and isinstance(value, bool):
             setattr(assessment, key, str(value).lower())
         elif key == "questions" and value is not None:
             setattr(assessment, key, [question.model_dump() for question in update.questions or []])
@@ -397,6 +398,7 @@ def _assessment_with_submissions(assessment: TeacherAssessment, db: Session):
         "attempts_allowed": assessment.attempts_allowed,
         "shuffle_questions": _string_to_bool(assessment.shuffle_questions),
         "show_answers_after_submission": _string_to_bool(assessment.show_answers_after_submission),
+        "allow_text_answers": _string_to_bool(getattr(assessment, "allow_text_answers", "true")),
         "questions": assessment.questions or [],
         "due_at": assessment.due_at,
         "submissions_count": len(submissions),
