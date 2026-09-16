@@ -728,9 +728,9 @@ def _answers_match_question(question: dict, actual: str, expected: str):
         if 0 <= option_index < len(options):
             actual = str(options[option_index])
     elif question_type == "true_false":
-        if signed_letter == "A":
+        if signed_letter in ("A", "T", "TRUE"):
             actual = "True"
-        elif signed_letter == "B":
+        elif signed_letter in ("B", "F", "FALSE"):
             actual = "False"
 
     return answers_match(actual, expected)
