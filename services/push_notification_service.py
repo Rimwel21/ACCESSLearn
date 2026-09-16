@@ -3,10 +3,12 @@ from __future__ import annotations
 from datetime import timedelta
 import json
 
+from sqlalchemy import inspect
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from core.config import settings
+from database.connection import engine
 from models.accounts import Accounts
 from models.push_notification import DeadlineNotificationLog, PushSubscription
 from models.student_profile import StudentProfile
@@ -118,6 +120,8 @@ def notify_assessment_created(db: Session, assessment: TeacherAssessment) -> Non
 
 def send_due_soon_deadline_notifications(db: Session) -> int:
     if not push_config()["enabled"]:
+        return 0
+    if not inspect(engine).has_table(TeacherAssessment.__tablename__):
         return 0
 
     total = 0

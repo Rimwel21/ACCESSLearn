@@ -37,5 +37,9 @@ class Section(Base):
     created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
 
-    # Students assigned to this section
-    students = relationship("StudentProfile", back_populates="assigned_section")
+    # Legacy compatibility: current student placement uses HI_SECTIONS.
+    students = relationship(
+        "StudentProfile",
+        primaryjoin="Section.id == foreign(StudentProfile.section_id)",
+        viewonly=True,
+    )

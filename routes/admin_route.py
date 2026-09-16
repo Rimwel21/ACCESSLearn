@@ -462,7 +462,11 @@ def list_system_audit_logs(
         d_to = datetime.fromisoformat(date_to)
 
     total, items = get_audit_logs(db, module=module, action=action, actor_role=actor_role, date_from=d_from, date_to=d_to, search=search, page=page, per_page=per_page)
-    return PaginatedResponse(total=total, page=page, per_page=per_page, items=items)
+    serialized_items = [
+        AuditLogOut.model_validate(item).model_dump(mode="json")
+        for item in items
+    ]
+    return PaginatedResponse(total=total, page=page, per_page=per_page, items=serialized_items)
 
 
 # ─── Notifications ─────────────────────────────────────────────────────────────

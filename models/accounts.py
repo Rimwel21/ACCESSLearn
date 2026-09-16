@@ -46,6 +46,13 @@ class Accounts(Base):
     tutorial_practices = relationship("HandsignTutorialPractice", passive_deletes=True)
     push_subscriptions = relationship("PushSubscription", back_populates="account", passive_deletes=True)
 
+    notifications_received = relationship(
+        "Notification",
+        back_populates="recipient",
+        foreign_keys="Notification.recipient_id",
+        passive_deletes=True,
+    )
+
     audit_logs = relationship(
         "AuditLog",
         back_populates="actor",

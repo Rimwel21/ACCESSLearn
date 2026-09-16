@@ -10,8 +10,12 @@ from models.audit_log import AuditLog  # noqa: F401 - register mapper relationsh
 from models.HI_sections import HI_SECTIONS
 from models.grade_levels import GradeLevels
 from models.handsign_tutorial_practice import HandsignTutorialPractice
+from models.notification import Notification
 from models.push_notification import DeadlineNotificationLog, PushSubscription
+from models.school_year import SchoolYear
+from models.section import Section
 from models.teacher_grade_handles import TeacherGradeHandles
+from models.teacher_invitation import TeacherInvitation
 from utils.enum import AccountStatusEnum, AuditActionEnum, SectionStatusEnum
 
 
@@ -23,8 +27,16 @@ def ensure_academic_tables() -> None:
         GradeLevels.__table__.create(bind=engine, checkfirst=True)
 
     inspector = inspect(engine)
+    if not inspector.has_table(SchoolYear.__tablename__):
+        SchoolYear.__table__.create(bind=engine, checkfirst=True)
+
+    inspector = inspect(engine)
     if not inspector.has_table(HI_SECTIONS.__tablename__):
         HI_SECTIONS.__table__.create(bind=engine, checkfirst=True)
+
+    inspector = inspect(engine)
+    if not inspector.has_table(Section.__tablename__):
+        Section.__table__.create(bind=engine, checkfirst=True)
 
     from models.teacher_section_assignments import TeacherSectionAssignment
     inspector = inspect(engine)
@@ -37,6 +49,8 @@ def ensure_academic_tables() -> None:
     _ensure_teacher_assessments_schema()
     _ensure_assessment_retake_request_schema()
     _ensure_handsign_tutorial_practice_schema()
+    _ensure_notification_schema()
+    _ensure_teacher_invitation_schema()
     _ensure_push_notification_schema()
     _ensure_student_profile_registration_schema()
     _ensure_hi_sections_teacher_id()
@@ -45,6 +59,10 @@ def ensure_academic_tables() -> None:
 
 
 def _ensure_account_statuses() -> None:
+    inspector = inspect(engine)
+    if not inspector.has_table(Accounts.__tablename__):
+        return
+
     with Session(engine) as db:
         db.execute(text("UPDATE accounts SET account_status = 'active' WHERE account_status IS NULL"))
         db.commit()
@@ -108,6 +126,18 @@ def _ensure_audit_log_schema() -> None:
     inspector = inspect(engine)
     if not inspector.has_table(AuditLog.__tablename__):
         AuditLog.__table__.create(bind=engine, checkfirst=True)
+
+
+def _ensure_notification_schema() -> None:
+    inspector = inspect(engine)
+    if not inspector.has_table(Notification.__tablename__):
+        Notification.__table__.create(bind=engine, checkfirst=True)
+
+
+def _ensure_teacher_invitation_schema() -> None:
+    inspector = inspect(engine)
+    if not inspector.has_table(TeacherInvitation.__tablename__):
+        TeacherInvitation.__table__.create(bind=engine, checkfirst=True)
 
 
 def _ensure_push_notification_schema() -> None:

@@ -59,3 +59,11 @@ class StudentProfile(Base):
     def email(self):
         return self.student_account.email if self.student_account else None
 
+    @property
+    def assigned_grade(self):
+        return self.grade_level
+
+    @property
+    def assigned_section(self):
+        return self.section
+
