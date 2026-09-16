@@ -404,7 +404,7 @@ def _dashboard_progress_for_student(student: StudentProfile, classes: list[Teach
     status_percent = round((completed_items / total_items) * 100) if total_items else 0
     learning_material_percent = round((len(completed_topic_ids) / len(topic_ids)) * 100) if topic_ids else 0
     activity_percent = round((activity_correct_total / activity_question_total) * 100) if activity_question_total else 0
-    status_value = "Complete" if total_items and completed_items == total_items else "Needs Help" if status_percent < 50 else "In Progress"
+    status_value = _progress_status_label(status_percent)
     return {
         "student_id": student.account_id,
         "student_name": student.name,
@@ -429,6 +429,16 @@ def _format_quiz_activity(progress: StudentQuizProgress, db: Session):
         source = " Auto-submitted" if progress.submission_type == "timed_out" else ""
         return f"{assessment.title}: {progress.score or 0}/{progress.total}{source}"
     return assessment.title
+
+
+def _progress_status_label(percent: int) -> str:
+    if percent <= 50:
+        return "Needs Guidance"
+    if percent <= 74:
+        return "Keep Improving"
+    if percent <= 89:
+        return "Good Progress"
+    return "Excellent"
 
 
 def list_teacher_classes(request: Request, db: Session, current_user: Accounts):
