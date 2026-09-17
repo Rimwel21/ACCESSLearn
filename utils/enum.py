@@ -38,6 +38,10 @@ class SectionStatusEnum(str, Enum):
     archived = "archived"
 
 class AuditActionEnum(str, Enum):
+    logged_in = "logged_in"
+    submitted_quiz = "submitted_quiz"
+    completed_topic = "completed_topic"
+    section_update = "section_update"
     created = "created"
     updated = "updated"
     assigned = "assigned"
