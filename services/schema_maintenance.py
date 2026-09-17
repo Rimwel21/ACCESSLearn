@@ -101,9 +101,25 @@ def _ensure_postgres_enum_values() -> None:
     if engine.dialect.name != "postgresql":
         return
 
+    from utils.enum import (
+        AccountStatusEnum, AuditActionEnum, BulkActionEnum, InvitationStatusEnum,
+        NotificationCategoryEnum, NotificationPriorityEnum, ReportTypeEnum,
+        RoleEnum, SectionStatusEnum, StudentType, UserSex, VerificationStatus
+    )
+
     enum_values = {
         "accountstatusenum": [status.value for status in AccountStatusEnum],
         "auditactionenum": [action.value for action in AuditActionEnum],
+        "roleenum": [role.value for role in RoleEnum],
+        "studenttype": [st.value for st in StudentType],
+        "usersex": [sex.value for sex in UserSex],
+        "verificationstatus": [vs.value for vs in VerificationStatus],
+        "sectionstatusenum": [ss.value for ss in SectionStatusEnum],
+        "invitationstatusenum": [inv.value for inv in InvitationStatusEnum],
+        "notificationcategoryenum": [nc.value for nc in NotificationCategoryEnum],
+        "notificationpriorityenum": [np.value for np in NotificationPriorityEnum],
+        "reporttypeenum": [rt.value for rt in ReportTypeEnum],
+        "bulkactionenum": [ba.value for ba in BulkActionEnum],
     }
 
     with engine.begin() as connection:
@@ -396,6 +412,39 @@ def _ensure_student_profile_registration_schema() -> None:
             else:
                 connection.execute(text(
                     "ALTER TABLE student_profiles ADD COLUMN learning_preferences VARCHAR"
+                ))
+
+        if "guardians_name" not in columns:
+            if is_pg:
+                connection.execute(text(
+                    "ALTER TABLE student_profiles "
+                    "ADD COLUMN IF NOT EXISTS guardians_name VARCHAR"
+                ))
+            else:
+                connection.execute(text(
+                    "ALTER TABLE student_profiles ADD COLUMN guardians_name VARCHAR"
+                ))
+
+        if "guardians_contact_no" not in columns:
+            if is_pg:
+                connection.execute(text(
+                    "ALTER TABLE student_profiles "
+                    "ADD COLUMN IF NOT EXISTS guardians_contact_no VARCHAR(20)"
+                ))
+            else:
+                connection.execute(text(
+                    "ALTER TABLE student_profiles ADD COLUMN guardians_contact_no VARCHAR(20)"
+                ))
+
+        if "address" not in columns:
+            if is_pg:
+                connection.execute(text(
+                    "ALTER TABLE student_profiles "
+                    "ADD COLUMN IF NOT EXISTS address VARCHAR"
+                ))
+            else:
+                connection.execute(text(
+                    "ALTER TABLE student_profiles ADD COLUMN address VARCHAR"
                 ))
 
         # PostgreSQL-only: partial unique index and FK migration via DO $$ block
