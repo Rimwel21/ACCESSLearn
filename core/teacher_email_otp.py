@@ -21,7 +21,7 @@ conf = ConnectionConfig(
 class EmailService:
 
     @staticmethod
-    async def send_otp_email(email: str, otp: str, subject: str = "Your ACCESSLearn OTP code"):
+    async def send_otp_email(email: str, otp: str, subject: str = "Your SIGNHEAR OTP code"):
 
         message = MessageSchema(
             subject=subject,

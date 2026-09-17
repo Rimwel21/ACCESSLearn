@@ -9,6 +9,18 @@ from utils.utc_now import utc_now
 from core.teacher_email_otp import EmailService
 from utils.generate_otp import hash_otp, generate_otp
 from auth.account_auth import hash_password
+from core.config import settings
+
+
+def _is_local_sqlite_database() -> bool:
+    return settings.database_url.startswith("sqlite")
+
+
+def _otp_is_expired(expired_at) -> bool:
+    now = utc_now()
+    if expired_at.tzinfo is None:
+        now = now.replace(tzinfo=None)
+    return expired_at < now
 
 async def request_teacher_otp(request:Request,db: Session, email: str):
     existing_account = db.query(Accounts).filter(Accounts.email == email).first()
@@ -66,6 +78,14 @@ async def request_teacher_otp(request:Request,db: Session, email: str):
         print(f"\n=======================================================", file=sys.stderr)
         print(f"[REGISTRATION OTP] COULD NOT SEND EMAIL: {e}", file=sys.stderr)
         print(f"=======================================================\n", file=sys.stderr)
+
+        if _is_local_sqlite_database():
+            return {
+                "message": "OTP generated for local testing. Email delivery failed.",
+                "delivery": "failed",
+                "debug_otp": otp,
+            }
+
         db.delete(otp_record)
         db.commit()
         raise HTTPException(
@@ -99,7 +119,7 @@ def verify_teacher_otp(db:Session, email:str, otp:str):
     if otp_record.is_used:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="otp already used")
     
-    if otp_record.expired_at < utc_now():
+    if _otp_is_expired(otp_record.expired_at):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="OTP is expired!")
     
     if otp_record.otp_hash != hash_otp(otp):
@@ -237,7 +257,7 @@ def _get_password_reset_otp(db: Session, email: str, otp: str):
     if not otp_record:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="OTP not found")
 
-    if otp_record.expired_at < utc_now():
+    if _otp_is_expired(otp_record.expired_at):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="OTP is expired!")
 
     if otp_record.otp_hash != hash_otp(otp):
@@ -351,7 +371,7 @@ def _get_role_password_reset_otp(db: Session, email: str, otp: str, role: RoleEn
     if not otp_record:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="OTP not found")
 
-    if otp_record.expired_at < utc_now():
+    if _otp_is_expired(otp_record.expired_at):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="OTP is expired!")
 
     if otp_record.otp_hash != hash_otp(otp):
