@@ -1,4 +1,7 @@
 import asyncio
+import logging
+import os
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -28,8 +31,11 @@ from routes.otp_route import router as otp_router
 from routes.admin_approval_route import router as admin_approval
 from limiter import limiter
 
+logger = logging.getLogger(__name__)
+BASE_DIR = Path(__file__).resolve().parent
+
 app = FastAPI()
-app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
 
 app.state.limiter = limiter
@@ -44,12 +50,18 @@ async def custom_limit_handler(request: Request, exc: RateLimitExceeded):
         }
     )
 
-origins = [
+local_origins = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
     "http://localhost:5177",
     "http://127.0.0.1:5177",
-] 
+]
+configured_origins = [
+    origin.strip().rstrip("/")
+    for origin in os.getenv("CORS_ORIGINS", "").split(",")
+    if origin.strip()
+]
+origins = list(dict.fromkeys([*local_origins, *configured_origins]))
 
 app.add_middleware(
     CORSMiddleware,
@@ -88,6 +100,7 @@ async def http_exception_with_cors(request: Request, exc: HTTPException):
 
 @app.exception_handler(Exception)
 async def unhandled_exception_with_cors(request: Request, exc: Exception):
+    logger.exception("Unhandled request error: %s %s", request.method, request.url.path)
     response = JSONResponse(
         status_code=500,
         content={"detail": "Internal server error"}
@@ -116,7 +129,10 @@ app.include_router(push_notifications)
 
 @app.on_event("startup")
 def ensure_database_schema():
-    ensure_academic_tables()
+    if os.getenv("AUTO_MIGRATE_ON_STARTUP", "true").lower() in {"1", "true", "yes"}:
+        ensure_academic_tables()
+    else:
+        logger.info("Skipping automatic schema maintenance (AUTO_MIGRATE_ON_STARTUP is disabled).")
 
 
 @app.on_event("startup")
@@ -141,9 +157,12 @@ async def start_deadline_notification_scheduler():
 def load_handsign_model():
     try:
         app.state.handsign_prediction_service = PredictionService(get_handsign_settings())
-        print("Hand Sign model loaded successfully.")
+        logger.info("Hand Sign model loaded successfully.")
     except Exception as e:
-        print(f"WARNING: Hand Sign model not loaded: {e}. Hand sign routes will not function, but authentication and other modules are active.")
+        logger.warning(
+            "Hand Sign model not loaded: %s. Hand sign routes will not function, but authentication and other modules are active.",
+            e,
+        )
         app.state.handsign_prediction_service = None
 
 @app.on_event("shutdown")
