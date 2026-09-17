@@ -54,6 +54,7 @@ origins = [
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"]
@@ -61,16 +62,19 @@ app.add_middleware(
 
 def cors_headers(request: Request):
     origin = request.headers.get("origin")
-    if origin not in origins:
+    if not origin:
         return {}
 
-    return {
-        "Access-Control-Allow-Origin": origin,
-        "Vary": "Origin",
-        "Access-Control-Allow-Credentials": "true",
-        "Access-Control-Allow-Headers": "Authorization, Content-Type",
-        "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-    }
+    if origin in origins or origin.startswith("http://localhost:") or origin.startswith("http://127.0.0.1:"):
+        return {
+            "Access-Control-Allow-Origin": origin,
+            "Vary": "Origin",
+            "Access-Control-Allow-Credentials": "true",
+            "Access-Control-Allow-Headers": "Authorization, Content-Type",
+            "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+        }
+
+    return {}
 
 @app.options("/{full_path:path}")
 async def preflight_handler(request: Request, full_path: str):
