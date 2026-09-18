@@ -1,8 +1,11 @@
 from pathlib import Path
 from datetime import datetime
+import logging
 import json
 import re
 import shutil
+import subprocess
+import tempfile
 import zipfile
 from uuid import uuid4
 from fastapi.responses import FileResponse
@@ -14,6 +17,7 @@ from models.teacher_class import TeacherClass
 from models.teacher_module import TeacherModule
 from schemas.teacher_module_schema import TeacherModuleCreate, TeacherModuleUpdate
 from services.push_notification_service import notify_module_created, notify_module_updated
+from core.config import settings
 from utils.enum import RoleEnum
 from utils.options import ALLOWED_LEARNING_WEEKS, ALLOWED_MODULE_CONTENT_TYPES
 
@@ -40,9 +44,11 @@ ALLOWED_MATERIAL_TYPES = {
 UPLOAD_DIR = Path("uploads/learning_materials")
 MATERIAL_IMAGE_DIR = Path("static/material_images")
 PDF_PAGE_DIR = Path("static/pdf_pages")
+PRESENTATION_SLIDE_DIR = Path("static/presentation_slides")
 PDF_MIN_TOPIC_PAGES = 2
 PDF_TARGET_TOPIC_PAGES = 3
 PDF_MAX_TOPIC_PAGES = 5
+logger = logging.getLogger(__name__)
 
 
 def _ensure_teacher(current_user: Accounts):
@@ -174,6 +180,7 @@ async def create_teacher_module_upload(
         db.commit()
         if saved_path.exists():
             saved_path.unlink()
+        _delete_presentation_slide_images(new_module)
         raise
     db.refresh(new_module)
     notify_module_created(db, new_module)
@@ -237,6 +244,7 @@ def update_teacher_module(request: Request, module_id: int, update: TeacherModul
 def delete_teacher_module(request: Request, module_id: int, db: Session, current_user: Accounts):
     module = get_teacher_module(request, module_id, db, current_user)
     file_path = Path(module.file_path) if module.file_path else None
+    _delete_presentation_slide_images(module)
 
     db.delete(module)
     db.commit()
@@ -256,6 +264,7 @@ async def replace_teacher_module_file(request: Request, module_id: int, material
     old_file_path = module.file_path
     old_file_size = module.file_size
     saved_path, file_size = _save_material_file(material_file)
+    old_slide_urls = _presentation_slide_urls(module)
     module.file_name = material_file.filename
     module.file_type = material_file.content_type
     module.file_path = str(saved_path)
@@ -271,12 +280,14 @@ async def replace_teacher_module_file(request: Request, module_id: int, material
         module.file_size = old_file_size
         if saved_path.exists():
             saved_path.unlink()
+        _delete_slide_images(_presentation_slide_urls(module))
         raise
     db.commit()
     db.refresh(module)
 
     if old_path and old_path.exists() and old_path != saved_path:
         old_path.unlink()
+    _delete_slide_images(old_slide_urls)
 
     notify_module_updated(db, module)
 
@@ -345,6 +356,8 @@ def _save_material_file(material_file: UploadFile):
     return destination, destination.stat().st_size
 
 
+
+
 def _replace_generated_topics(db: Session, module: TeacherModule, extracted_text: str, image_urls: list[str] | None = None):
     _replace_topic_records(db, module, _split_topics(module.title, module.description, extracted_text, image_urls or []))
 
@@ -355,6 +368,11 @@ def _process_material_topics(db: Session, module: TeacherModule, path: Path):
         return
 
     if _is_pptx_path(path):
+        rendered_topics = _render_presentation_slide_topics(path, module.title, module.description)
+        if rendered_topics:
+            _replace_topic_records(db, module, rendered_topics)
+            return
+
         topics = _extract_pptx_slide_topics(path, module.title, module.description)
         if topics:
             _replace_topic_records(db, module, topics)
@@ -366,6 +384,111 @@ def _process_material_topics(db: Session, module: TeacherModule, path: Path):
         _extract_material_text(path, module.title, module.description),
         _extract_material_images(path),
     )
+
+
+def _render_presentation_slide_topics(path: Path, module_title: str, module_description: str) -> list[dict]:
+    """Render every PPT/PPTX slide as a complete image through LibreOffice."""
+    soffice_path = settings.soffice_path or shutil.which("soffice")
+    if not soffice_path:
+        logger.info("Skipping full-slide rendering because soffice is not configured.")
+        return []
+
+    try:
+        import fitz
+    except ImportError:
+        logger.warning("Skipping full-slide rendering because PyMuPDF is not installed.")
+        return []
+
+    with tempfile.TemporaryDirectory(prefix="accesslearn-soffice-") as working_dir:
+        work_path = Path(working_dir)
+        output_dir = work_path / "output"
+        profile_dir = work_path / "profile"
+        output_dir.mkdir()
+        profile_dir.mkdir()
+        expected_pdf = output_dir / f"{path.stem}.pdf"
+        command = [
+            soffice_path,
+            "--headless",
+            "--nologo",
+            "--nodefault",
+            "--nolockcheck",
+            "--norestore",
+            f"-env:UserInstallation={profile_dir.as_uri()}",
+            "--convert-to",
+            "pdf:impress_pdf_Export",
+            "--outdir",
+            str(output_dir),
+            str(path.resolve()),
+        ]
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, timeout=120, check=False)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            logger.warning("Full-slide rendering failed for %s: %s", path.name, exc)
+            return []
+
+        if result.returncode != 0 or not expected_pdf.exists():
+            logger.warning(
+                "Full-slide rendering failed for %s: %s",
+                path.name,
+                result.stderr.strip() or result.stdout.strip() or f"exit code {result.returncode}",
+            )
+            return []
+
+        try:
+            document = fitz.open(expected_pdf)
+            PRESENTATION_SLIDE_DIR.mkdir(parents=True, exist_ok=True)
+            topics = []
+            slide_titles = _presentation_slide_titles(path)
+            for index, page in enumerate(document, start=1):
+                image_name = f"{uuid4().hex}_slide_{index}.png"
+                destination = PRESENTATION_SLIDE_DIR / image_name
+                page.get_pixmap(matrix=fitz.Matrix(1.6, 1.6), alpha=False).save(str(destination))
+                slide_title = slide_titles[index - 1] if index <= len(slide_titles) else ""
+                title = slide_title or f"Slide {index}"
+                topics.append({
+                    "title": title[:160],
+                    "description": module_description.strip() or title,
+                    "content": title,
+                    "image_url": f"/static/presentation_slides/{image_name}",
+                    "page_image_urls": [f"/static/presentation_slides/{image_name}"],
+                })
+            document.close()
+            return topics
+        except Exception as exc:
+            logger.warning("Could not render slide images for %s: %s", path.name, exc)
+            return []
+
+
+def _presentation_slide_titles(path: Path) -> list[str]:
+    try:
+        from pptx import Presentation
+        presentation = Presentation(str(path))
+        titles = []
+        for slide in presentation.slides:
+            title_shape = slide.shapes.title
+            title = title_shape.text.strip() if title_shape and title_shape.text else ""
+            titles.append(title if not _SLIDE_MARKER_RE.match(title) else "")
+        return titles
+    except Exception:
+        return []
+
+
+def _presentation_slide_urls(module: TeacherModule) -> list[str]:
+    urls: list[str] = []
+    for topic in module.topics:
+        urls.extend(url for url in (topic.page_image_urls or []) if url.startswith("/static/presentation_slides/"))
+    return urls
+
+
+def _delete_presentation_slide_images(module: TeacherModule) -> None:
+    _delete_slide_images(_presentation_slide_urls(module))
+
+
+def _delete_slide_images(urls: list[str]) -> None:
+    for url in urls:
+        path = PRESENTATION_SLIDE_DIR / Path(url).name
+        if path.exists():
+            path.unlink()
 
 
 def _replace_topic_records(db: Session, module: TeacherModule, topics: list[dict]):
