@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     VAPID_PUBLIC_KEY: str | None = None
     VAPID_PRIVATE_KEY: str | None = None
     VAPID_SUBJECT: str | None = None
+    soffice_path: str | None = None
 
     model_config = SettingsConfigDict(
         env_file=".env",
