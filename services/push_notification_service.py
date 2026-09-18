@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 import json
+from threading import Thread
 
 from sqlalchemy import inspect
 from sqlalchemy.exc import IntegrityError
@@ -116,6 +117,42 @@ def notify_assessment_created(db: Session, assessment: TeacherAssessment) -> Non
         body=f"{assessment.title} was posted by your teacher.",
         url="/student/quiz" if is_quiz else "/student/activities",
     )
+
+
+def queue_module_notification(module_id: int, *, updated: bool = False) -> None:
+    Thread(
+        target=_send_module_notification_in_background,
+        args=(module_id, updated),
+        daemon=True,
+    ).start()
+
+
+def queue_assessment_notification(assessment_id: int) -> None:
+    Thread(target=_send_assessment_notification_in_background, args=(assessment_id,), daemon=True).start()
+
+
+def _send_module_notification_in_background(module_id: int, updated: bool) -> None:
+    from database.connection import SessionLocal
+
+    db = SessionLocal()
+    try:
+        module = db.get(TeacherModule, module_id)
+        if module:
+            (notify_module_updated if updated else notify_module_created)(db, module)
+    finally:
+        db.close()
+
+
+def _send_assessment_notification_in_background(assessment_id: int) -> None:
+    from database.connection import SessionLocal
+
+    db = SessionLocal()
+    try:
+        assessment = db.get(TeacherAssessment, assessment_id)
+        if assessment:
+            notify_assessment_created(db, assessment)
+    finally:
+        db.close()
 
 
 def send_due_soon_deadline_notifications(db: Session) -> int:

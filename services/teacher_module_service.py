@@ -2,12 +2,14 @@ from pathlib import Path
 from datetime import datetime
 import logging
 import json
+import os
 import re
 import shutil
 import subprocess
 import tempfile
 import zipfile
 from uuid import uuid4
+from threading import Lock, Thread
 from fastapi.responses import FileResponse
 from fastapi import HTTPException, Request, UploadFile, status
 from sqlalchemy.orm import Session, joinedload
@@ -16,7 +18,7 @@ from models.learning_topic import LearningTopic
 from models.teacher_class import TeacherClass
 from models.teacher_module import TeacherModule
 from schemas.teacher_module_schema import TeacherModuleCreate, TeacherModuleUpdate
-from services.push_notification_service import notify_module_created, notify_module_updated
+from services.push_notification_service import queue_module_notification
 from core.config import settings
 from utils.enum import RoleEnum
 from utils.options import ALLOWED_LEARNING_WEEKS, ALLOWED_MODULE_CONTENT_TYPES
@@ -49,6 +51,11 @@ PDF_MIN_TOPIC_PAGES = 2
 PDF_TARGET_TOPIC_PAGES = 3
 PDF_MAX_TOPIC_PAGES = 5
 logger = logging.getLogger(__name__)
+_TOPIC_REGENERATION_LOCK = Lock()
+_MATERIAL_PROCESSING_LOCK = Lock()
+_MATERIAL_PROCESSING_JOBS: set[int] = set()
+_FAILED_PRESENTATION_RENDER_PATHS: set[str] = set()
+PRESENTATION_RENDER_TIMEOUT_SECONDS = 180
 
 
 def _ensure_teacher(current_user: Accounts):
@@ -127,7 +134,7 @@ def create_teacher_module(request: Request, module: TeacherModuleCreate, db: Ses
     db.refresh(new_module)
     _replace_generated_topics(db, new_module, _build_fallback_text(new_module.title, new_module.description, new_module.file_name), [])
     db.refresh(new_module)
-    notify_module_created(db, new_module)
+    queue_module_notification(new_module.id)
 
     return new_module
 
@@ -174,7 +181,7 @@ async def create_teacher_module_upload(
     db.commit()
     db.refresh(new_module)
     try:
-        _process_material_topics(db, new_module, saved_path)
+        _process_material_topics(db, new_module, saved_path, render_presentation=False)
     except Exception:
         db.delete(new_module)
         db.commit()
@@ -183,7 +190,9 @@ async def create_teacher_module_upload(
         _delete_presentation_slide_images(new_module)
         raise
     db.refresh(new_module)
-    notify_module_created(db, new_module)
+    if _requires_background_material_processing(saved_path):
+        _queue_material_topic_regeneration(new_module.id)
+    queue_module_notification(new_module.id)
 
     return new_module
 
@@ -200,8 +209,7 @@ def get_teacher_module(request: Request, module_id: int, db: Session, current_us
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Module not found")
 
     if _needs_material_topic_regeneration(module):
-        _process_material_topics(db, module, Path(module.file_path))
-        db.refresh(module)
+        _queue_material_topic_regeneration(module.id)
     elif not module.topics:
         _replace_generated_topics(db, module, _build_fallback_text(module.title, module.description, module.file_name), [])
         db.refresh(module)
@@ -236,7 +244,7 @@ def update_teacher_module(request: Request, module_id: int, update: TeacherModul
         if not module.topics:
             _replace_generated_topics(db, module, _build_fallback_text(module.title, module.description, module.file_name), [])
             db.refresh(module)
-    notify_module_updated(db, module)
+    queue_module_notification(module.id, updated=True)
 
     return module
 
@@ -271,7 +279,7 @@ async def replace_teacher_module_file(request: Request, module_id: int, material
     module.file_size = file_size
 
     try:
-        _process_material_topics(db, module, saved_path)
+        _process_material_topics(db, module, saved_path, render_presentation=False)
     except Exception:
         db.rollback()
         module.file_name = old_file_name
@@ -285,11 +293,14 @@ async def replace_teacher_module_file(request: Request, module_id: int, material
     db.commit()
     db.refresh(module)
 
+    if _requires_background_material_processing(saved_path):
+        _queue_material_topic_regeneration(module.id)
+
     if old_path and old_path.exists() and old_path != saved_path:
         old_path.unlink()
     _delete_slide_images(old_slide_urls)
 
-    notify_module_updated(db, module)
+    queue_module_notification(module.id, updated=True)
 
     return module
 
@@ -362,42 +373,130 @@ def _replace_generated_topics(db: Session, module: TeacherModule, extracted_text
     _replace_topic_records(db, module, _split_topics(module.title, module.description, extracted_text, image_urls or []))
 
 
-def _process_material_topics(db: Session, module: TeacherModule, path: Path):
-    if _is_pdf_path(path):
-        _replace_topic_records(db, module, _extract_pdf_logical_topics(path, module.title, module.description))
-        return
+def _process_material_topics(
+    db: Session,
+    module: TeacherModule,
+    path: Path,
+    *,
+    render_presentation: bool = True,
+) -> bool:
+    source_path = _resolve_material_path(path)
+    if source_path is None:
+        logger.warning("Cannot regenerate module %s because its uploaded file is missing: %s", module.id, path)
+        return False
 
-    if _is_pptx_path(path):
-        rendered_topics = _render_presentation_slide_topics(path, module.title, module.description)
-        if rendered_topics:
+    if source_path != path:
+        # Old records can retain an earlier generated upload ID after a file was
+        # restored or copied locally. Persist the recovered path for later loads.
+        module.file_path = str(source_path)
+        db.commit()
+
+    if not render_presentation and _requires_background_material_processing(source_path):
+        _replace_generated_topics(
+            db,
+            module,
+            _build_fallback_text(module.title, module.description, module.file_name),
+            [],
+        )
+        return True
+
+    if _is_pdf_path(source_path) and render_presentation:
+        _replace_topic_records(db, module, _extract_pdf_logical_topics(source_path, module.title, module.description))
+        return True
+
+    if _is_pptx_path(source_path) and render_presentation:
+        rendered_topics = _render_presentation_slide_topics(source_path, module.title, module.description)
+        if rendered_topics is not None:
+            if not rendered_topics:
+                return False
             _replace_topic_records(db, module, rendered_topics)
-            return
+            return True
 
-        topics = _extract_pptx_slide_topics(path, module.title, module.description)
+        # LibreOffice is unavailable. Retain the established text-only fallback
+        # for installations that do not support rendered presentation slides.
+        topics = _extract_pptx_slide_topics(source_path, module.title, module.description)
         if topics:
             _replace_topic_records(db, module, topics)
-            return
+            return True
 
     _replace_generated_topics(
         db,
         module,
-        _extract_material_text(path, module.title, module.description),
-        _extract_material_images(path),
+        _extract_material_text(source_path, module.title, module.description),
+        _extract_material_images(source_path),
     )
+    return True
 
 
-def _render_presentation_slide_topics(path: Path, module_title: str, module_description: str) -> list[dict]:
+def _queue_material_topic_regeneration(module_id: int) -> None:
+    """Prepare file-derived topics outside the request that serves a page."""
+    with _MATERIAL_PROCESSING_LOCK:
+        if module_id in _MATERIAL_PROCESSING_JOBS:
+            return
+        _MATERIAL_PROCESSING_JOBS.add(module_id)
+
+    Thread(target=_regenerate_material_topics_in_background, args=(module_id,), daemon=True).start()
+
+
+def _regenerate_material_topics_in_background(module_id: int) -> None:
+    from database.connection import SessionLocal
+
+    db = SessionLocal()
+    try:
+        module = (
+            db.query(TeacherModule)
+            .options(joinedload(TeacherModule.topics))
+            .filter(TeacherModule.id == module_id)
+            .first()
+        )
+        if module and _needs_material_topic_regeneration(module):
+            with _TOPIC_REGENERATION_LOCK:
+                db.expire(module, ["topics"])
+                if _needs_material_topic_regeneration(module):
+                    _process_material_topics(db, module, Path(module.file_path))
+    except Exception:
+        logger.exception("Background material processing failed for module %s", module_id)
+    finally:
+        db.close()
+        with _MATERIAL_PROCESSING_LOCK:
+            _MATERIAL_PROCESSING_JOBS.discard(module_id)
+
+
+def _resolve_material_path(path: Path) -> Path | None:
+    """Find a moved upload using its original filename without guessing content."""
+    if path.is_file():
+        return path
+
+    match = re.match(r"^[0-9a-f]{32}_(.+)$", path.name, flags=re.IGNORECASE)
+    if not match:
+        return None
+    original_name = match.group(1)
+    candidates = [candidate for candidate in UPLOAD_DIR.glob(f"*_{original_name}") if candidate.is_file()]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda candidate: candidate.stat().st_mtime)
+
+
+def _requires_background_material_processing(path: Path) -> bool:
+    return _is_pdf_path(path) or _is_pptx_path(path)
+
+
+def _render_presentation_slide_topics(path: Path, module_title: str, module_description: str) -> list[dict] | None:
     """Render every PPT/PPTX slide as a complete image through LibreOffice."""
-    soffice_path = settings.soffice_path or shutil.which("soffice")
+    path_key = str(path.resolve()).lower()
+    if path_key in _FAILED_PRESENTATION_RENDER_PATHS:
+        return []
+
+    soffice_path = _get_soffice_path()
     if not soffice_path:
         logger.info("Skipping full-slide rendering because soffice is not configured.")
-        return []
+        return None
 
     try:
         import fitz
     except ImportError:
         logger.warning("Skipping full-slide rendering because PyMuPDF is not installed.")
-        return []
+        return None
 
     with tempfile.TemporaryDirectory(prefix="accesslearn-soffice-") as working_dir:
         work_path = Path(working_dir)
@@ -407,7 +506,7 @@ def _render_presentation_slide_topics(path: Path, module_title: str, module_desc
         profile_dir.mkdir()
         expected_pdf = output_dir / f"{path.stem}.pdf"
         command = [
-            soffice_path,
+            _get_soffice_command(soffice_path),
             "--headless",
             "--nologo",
             "--nodefault",
@@ -421,9 +520,23 @@ def _render_presentation_slide_topics(path: Path, module_title: str, module_desc
             str(path.resolve()),
         ]
         try:
-            result = subprocess.run(command, capture_output=True, text=True, timeout=120, check=False)
+            environment = os.environ.copy()
+            environment.update({
+                "SAL_USE_VCLPLUGIN": "gen",
+                "SAL_DISABLE_OPENCL": "1",
+                "OOO_DISABLE_RECOVERY": "1",
+            })
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=PRESENTATION_RENDER_TIMEOUT_SECONDS,
+                check=False,
+                env=environment,
+            )
         except (OSError, subprocess.TimeoutExpired) as exc:
             logger.warning("Full-slide rendering failed for %s: %s", path.name, exc)
+            _FAILED_PRESENTATION_RENDER_PATHS.add(path_key)
             return []
 
         if result.returncode != 0 or not expected_pdf.exists():
@@ -432,6 +545,7 @@ def _render_presentation_slide_topics(path: Path, module_title: str, module_desc
                 path.name,
                 result.stderr.strip() or result.stdout.strip() or f"exit code {result.returncode}",
             )
+            _FAILED_PRESENTATION_RENDER_PATHS.add(path_key)
             return []
 
         try:
@@ -456,6 +570,7 @@ def _render_presentation_slide_topics(path: Path, module_title: str, module_desc
             return topics
         except Exception as exc:
             logger.warning("Could not render slide images for %s: %s", path.name, exc)
+            _FAILED_PRESENTATION_RENDER_PATHS.add(path_key)
             return []
 
 
@@ -518,6 +633,27 @@ def _is_pptx_path(path: Path):
     return path.suffix.lower() in {".pptx", ".ppt"}
 
 
+def _get_soffice_path() -> str | None:
+    """Find LibreOffice on configured, PATH, and common Windows installations."""
+    configured_path = settings.soffice_path or shutil.which("soffice")
+    if configured_path and Path(configured_path).is_file():
+        return configured_path
+
+    windows_default = Path(r"C:\Program Files\LibreOffice\program\soffice.exe")
+    if windows_default.is_file():
+        return str(windows_default)
+    return None
+
+
+def _get_soffice_command(soffice_path: str) -> str:
+    """Use the console launcher on Windows so headless conversion does not hang."""
+    executable = Path(soffice_path)
+    console_launcher = executable.with_suffix(".com")
+    if os.name == "nt" and console_launcher.is_file():
+        return str(console_launcher)
+    return str(executable)
+
+
 def _needs_pdf_topic_regeneration(module: TeacherModule):
     if not module.file_path or not _is_pdf_path(Path(module.file_path)):
         return False
@@ -525,7 +661,27 @@ def _needs_pdf_topic_regeneration(module: TeacherModule):
 
 
 def _needs_material_topic_regeneration(module: TeacherModule):
-    return _needs_pdf_topic_regeneration(module)
+    if _needs_pdf_topic_regeneration(module):
+        return True
+
+    if not module.file_path or not _is_pptx_path(Path(module.file_path)):
+        return False
+    if str(Path(module.file_path).resolve()).lower() in _FAILED_PRESENTATION_RENDER_PATHS:
+        return False
+    if not _get_soffice_path():
+        return False
+    if not module.topics:
+        return True
+
+    # Previous versions stored extracted text and small SVG fragments. A rendered
+    # presentation is complete only when every slide has its full PNG page image.
+    return any(
+        not any(
+            url.startswith("/static/presentation_slides/") and url.lower().endswith(".png")
+            for url in (topic.page_image_urls or [])
+        )
+        for topic in module.topics
+    )
 
 
 def _needs_page_image_topic_regeneration(module: TeacherModule):
