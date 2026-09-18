@@ -11,7 +11,10 @@ from models.student_profile import StudentProfile
 from models.teacher_assessment import TeacherAssessment
 from models.teacher_class import TeacherClass
 from models.teacher_module import TeacherModule
-from services.teacher_module_service import _needs_material_topic_regeneration, _process_material_topics
+from services.teacher_module_service import (
+    _needs_material_topic_regeneration,
+    _queue_material_topic_regeneration,
+)
 from utils.enum import RoleEnum
 from utils.handsign.science_vocabulary import answers_match
 from utils.utc_now import utc_now
@@ -959,8 +962,9 @@ def _ensure_topics(db: Session, modules: list[TeacherModule]):
     changed = False
     for module in modules:
         if _needs_material_topic_regeneration(module):
-            _process_material_topics(db, module, Path(module.file_path))
-            continue
+            # File conversion can be expensive. Let the student keep using the
+            # page while a single background job prepares rendered content.
+            _queue_material_topic_regeneration(module.id)
         if module.topics:
             continue
         module.topics.append(LearningTopic(
