@@ -24,6 +24,21 @@ class TeacherPasswordResetConfirm(BaseModel):
     new_password: str = Field(min_length=8, max_length=30)
     role: RoleEnum = RoleEnum.teacher
 
+class StudentPasswordResetRequest(BaseModel):
+    username: str = Field(min_length=5, max_length=50)
+    role: RoleEnum = RoleEnum.student
+
+class StudentPasswordResetVerify(BaseModel):
+    username: str = Field(min_length=5, max_length=50)
+    otp: str = Field(min_length=6, max_length=6)
+    role: RoleEnum = RoleEnum.student
+
+class StudentPasswordResetConfirm(BaseModel):
+    username: str = Field(min_length=5, max_length=50)
+    otp: str = Field(min_length=6, max_length=6)
+    new_password: str = Field(min_length=8, max_length=30)
+    role: RoleEnum = RoleEnum.student
+
 class AdminPasswordResetRequest(BaseModel):
     email: EmailStr
     role: RoleEnum = RoleEnum.admin

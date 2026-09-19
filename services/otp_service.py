@@ -268,6 +268,145 @@ def _get_password_reset_otp(db: Session, email: str, otp: str):
     return otp_record
 
 
+async def request_student_password_reset_otp(request: Request, db: Session, username: str):
+    normalized_username = username.strip()
+    account = db.query(Accounts).filter(
+        Accounts.username == normalized_username,
+        Accounts.role == RoleEnum.student,
+    ).first()
+
+    if not account:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student account not found")
+
+    if account.verification_status == VerificationStatus.blocked:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Blocked account cannot reset password")
+
+    expired_otps = db.query(EmailOTP).filter(
+        EmailOTP.email == normalized_username,
+        EmailOTP.role == RoleEnum.student,
+        EmailOTP.expired_at < utc_now(),
+        EmailOTP.verification_status == VerificationStatus.pending,
+    ).all()
+
+    for otp_record in expired_otps:
+        db.delete(otp_record)
+
+    pending_otp = db.query(EmailOTP).filter(
+        EmailOTP.email == normalized_username,
+        EmailOTP.role == RoleEnum.student,
+        EmailOTP.verification_status == VerificationStatus.pending,
+        EmailOTP.expired_at >= utc_now(),
+    ).order_by(EmailOTP.created_at.desc()).first()
+
+    if pending_otp:
+        db.delete(pending_otp)
+
+    otp = generate_otp()
+    otp_record = EmailOTP(
+        email=normalized_username,
+        otp_hash=hash_otp(otp),
+        role=RoleEnum.student,
+        expired_at=utc_now() + timedelta(minutes=5),
+        is_used=False,
+        attempt_count=0,
+        verification_status=VerificationStatus.pending,
+    )
+
+    db.add(otp_record)
+    db.commit()
+
+    if not account.email:
+        if _is_local_sqlite_database():
+            return {
+                "message": "OTP generated for local student password reset testing.",
+                "delivery": "failed",
+                "debug_otp": otp,
+            }
+        db.delete(otp_record)
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Student account has no email for OTP delivery. Ask an administrator or teacher to reset the student password.",
+        )
+
+    try:
+        await EmailService.send_teacher_otp_email(email=account.email, otp=otp)
+    except Exception as e:
+        if _is_local_sqlite_database():
+            return {
+                "message": "OTP generated for local student password reset testing. Email delivery failed.",
+                "delivery": "failed",
+                "debug_otp": otp,
+            }
+        db.delete(otp_record)
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Could not send OTP email. Check the configured mail account and try again.",
+        ) from e
+
+    return {
+        "message": "OTP sent successfully",
+        "delivery": "sent",
+    }
+
+
+def verify_student_password_reset_otp(db: Session, username: str, otp: str):
+    _get_student_password_reset_otp(db, username, otp)
+    return {"message": "OTP verified. Enter a new password."}
+
+
+def confirm_student_password_reset(db: Session, username: str, otp: str, new_password: str):
+    normalized_username = username.strip()
+    account = db.query(Accounts).filter(
+        Accounts.username == normalized_username,
+        Accounts.role == RoleEnum.student,
+    ).first()
+
+    if not account:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student account not found")
+
+    otp_record = _get_student_password_reset_otp(db, normalized_username, otp)
+
+    account.hashed_password = hash_password(new_password)
+    otp_record.is_used = True
+    otp_record.verification_status = VerificationStatus.verified
+    db.commit()
+
+    return {"message": "Password reset successfully. You can now log in."}
+
+
+def _get_student_password_reset_otp(db: Session, username: str, otp: str):
+    normalized_username = username.strip()
+    account = db.query(Accounts).filter(
+        Accounts.username == normalized_username,
+        Accounts.role == RoleEnum.student,
+    ).first()
+
+    if not account:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student account not found")
+
+    otp_record = db.query(EmailOTP).filter(
+        EmailOTP.email == normalized_username,
+        EmailOTP.role == RoleEnum.student,
+        EmailOTP.verification_status == VerificationStatus.pending,
+        EmailOTP.is_used == False,
+    ).order_by(EmailOTP.created_at.desc()).first()
+
+    if not otp_record:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="OTP not found")
+
+    if _otp_is_expired(otp_record.expired_at):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="OTP is expired!")
+
+    if otp_record.otp_hash != hash_otp(otp):
+        otp_record.attempt_count += 1
+        db.commit()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid OTP")
+
+    return otp_record
+
+
 async def request_admin_password_reset_otp(request: Request, db: Session, email: str):
     account = db.query(Accounts).filter(
         Accounts.email == email,

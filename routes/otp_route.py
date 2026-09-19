@@ -8,6 +8,9 @@ from schemas.otp_schema import (
     TeacherPasswordResetRequest,
     TeacherPasswordResetVerify,
     TeacherPasswordResetConfirm,
+    StudentPasswordResetRequest,
+    StudentPasswordResetVerify,
+    StudentPasswordResetConfirm,
     AdminPasswordResetRequest,
     AdminPasswordResetVerify,
     AdminPasswordResetConfirm,
@@ -18,6 +21,9 @@ from services.otp_service import (
     request_teacher_password_reset_otp,
     verify_teacher_password_reset_otp,
     confirm_teacher_password_reset,
+    request_student_password_reset_otp,
+    verify_student_password_reset_otp,
+    confirm_student_password_reset,
     request_admin_password_reset_otp,
     verify_admin_password_reset_otp,
     confirm_admin_password_reset,
@@ -49,6 +55,19 @@ async def verify_teacher_password_reset_route(payload: TeacherPasswordResetVerif
 @router.post("/teacher/password-reset/confirm")
 async def confirm_teacher_password_reset_route(payload: TeacherPasswordResetConfirm, db: Session = Depends(get_db)):
     return confirm_teacher_password_reset(db=db, email=payload.email, otp=payload.otp, new_password=payload.new_password)
+
+@router.post("/student/password-reset/request")
+@limiter.limit("2/minute")
+async def request_student_password_reset_route(request: Request, payload: StudentPasswordResetRequest, db: Session = Depends(get_db)):
+    return await request_student_password_reset_otp(request=request, db=db, username=payload.username)
+
+@router.post("/student/password-reset/verify")
+async def verify_student_password_reset_route(payload: StudentPasswordResetVerify, db: Session = Depends(get_db)):
+    return verify_student_password_reset_otp(db=db, username=payload.username, otp=payload.otp)
+
+@router.post("/student/password-reset/confirm")
+async def confirm_student_password_reset_route(payload: StudentPasswordResetConfirm, db: Session = Depends(get_db)):
+    return confirm_student_password_reset(db=db, username=payload.username, otp=payload.otp, new_password=payload.new_password)
 
 @router.post("/admin/password-reset/request")
 @limiter.limit("2/minute")
