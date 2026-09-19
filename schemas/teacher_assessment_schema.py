@@ -28,7 +28,7 @@ class TeacherAssessmentBase(BaseModel):
     attempts_allowed: int = Field(default=1, ge=1, le=99)
     shuffle_questions: bool = True
     show_answers_after_submission: bool = True
-    allow_text_answers: bool = True
+    allow_text_answers: bool = False
     questions: list[AssessmentQuestion] = Field(default_factory=list)
     due_at: datetime | None = None
 

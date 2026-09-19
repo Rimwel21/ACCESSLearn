@@ -293,11 +293,11 @@ def _ensure_teacher_assessments_schema() -> None:
             if is_pg:
                 connection.execute(text(
                     "ALTER TABLE teacher_assessments "
-                    "ADD COLUMN IF NOT EXISTS allow_text_answers VARCHAR(10) DEFAULT 'true' NOT NULL"
+                    "ADD COLUMN IF NOT EXISTS allow_text_answers VARCHAR(10) DEFAULT 'false' NOT NULL"
                 ))
             else:
                 connection.execute(text(
-                    "ALTER TABLE teacher_assessments ADD COLUMN allow_text_answers VARCHAR(10) DEFAULT 'true' NOT NULL"
+                    "ALTER TABLE teacher_assessments ADD COLUMN allow_text_answers VARCHAR(10) DEFAULT 'false' NOT NULL"
                 ))
 
     _ensure_student_quiz_progress_schema()

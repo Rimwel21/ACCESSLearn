@@ -934,7 +934,7 @@ def _assessment_to_dict(assessment: TeacherAssessment, db: Session | None = None
         "attempts_allowed": assessment.attempts_allowed,
         "shuffle_questions": _string_to_bool(assessment.shuffle_questions),
         "show_answers_after_submission": _string_to_bool(assessment.show_answers_after_submission),
-        "allow_text_answers": _string_to_bool(getattr(assessment, "allow_text_answers", "true")),
+        "allow_text_answers": _string_to_bool(getattr(assessment, "allow_text_answers", "false")),
         "questions": assessment.questions or [],
         "due_at": assessment.due_at,
         "student_status": progress.status if progress else None,
