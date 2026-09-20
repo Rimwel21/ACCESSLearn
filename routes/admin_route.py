@@ -37,6 +37,7 @@ from schemas.admin_schema import (
 )
 from services.dashboard_service import DashboardService
 from services.account_admin_service import list_accounts, change_account_status, hard_delete_account, bulk_action
+from services.academic_service import ALLOWED_GRADE_NAMES
 from services.invitation_service import send_teacher_invitation, list_invitations, resend_invitation, cancel_invitation
 from services.section_admin_service import SectionAdminService
 from services.student_admin_service import StudentAdminService
@@ -198,7 +199,12 @@ def get_grade_levels(
     db: Session = Depends(get_db),
     admin: Accounts = Depends(require_admin)
 ):
-    return db.query(GradeLevels).order_by(GradeLevels.name).all()
+    return (
+        db.query(GradeLevels)
+        .filter(GradeLevels.name.in_(ALLOWED_GRADE_NAMES))
+        .order_by(GradeLevels.name)
+        .all()
+    )
 
 @router.patch("/grade-levels/{grade_id}", response_model=GradeLevelOut)
 def update_grade_level(

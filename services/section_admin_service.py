@@ -15,18 +15,27 @@ from repositories.section_repository import SectionRepository
 from repositories.account_repository import AccountRepository
 from services.audit_service import write_log
 from repositories.notification_repository import NotificationRepository
+from services.academic_service import ALLOWED_GRADE_NAMES, get_grade_level_or_404
 from utils.enum import SectionStatusEnum, AuditActionEnum, RoleEnum, NotificationCategoryEnum, NotificationPriorityEnum
 from typing import List, Tuple, Optional
+
+def _supported_grade_name(name: str) -> str:
+    normalized = name.strip().lower()
+    for allowed_name in ALLOWED_GRADE_NAMES:
+        if allowed_name.lower() == normalized:
+            return allowed_name
+    raise HTTPException(status_code=400, detail="Only Grade 4, Grade 5, and Grade 6 are supported")
 
 class SectionAdminService:
     # ─── Grade Level CRUD ──────────────────────────────────────────────────────────
     @staticmethod
     def create_grade_level(db: Session, data: GradeLevelCreate, admin: Accounts, request: Request) -> GradeLevels:
-        existing = db.query(GradeLevels).filter(GradeLevels.name == data.name).first()
+        grade_name = _supported_grade_name(data.name)
+        existing = db.query(GradeLevels).filter(GradeLevels.name == grade_name).first()
         if existing:
             raise HTTPException(status_code=400, detail="Grade level already exists")
         
-        grade = GradeLevels(name=data.name, status=SectionStatusEnum.active)
+        grade = GradeLevels(name=grade_name, status=SectionStatusEnum.active)
         db.add(grade)
         db.commit()
         db.refresh(grade)
@@ -40,15 +49,16 @@ class SectionAdminService:
 
     @staticmethod
     def update_grade_level(db: Session, grade_id: int, data: GradeLevelUpdate, admin: Accounts, request: Request) -> GradeLevels:
-        grade = db.query(GradeLevels).filter(GradeLevels.id == grade_id).first()
+        grade = db.query(GradeLevels).filter(GradeLevels.id == grade_id, GradeLevels.name.in_(ALLOWED_GRADE_NAMES)).first()
         if not grade:
             raise HTTPException(status_code=404, detail="Grade level not found")
         
         if data.name is not None and data.name != grade.name:
-            existing = db.query(GradeLevels).filter(GradeLevels.name == data.name).first()
+            grade_name = _supported_grade_name(data.name)
+            existing = db.query(GradeLevels).filter(GradeLevels.name == grade_name).first()
             if existing:
                 raise HTTPException(status_code=400, detail="Grade level name already exists")
-            grade.name = data.name
+            grade.name = grade_name
 
         if data.status is not None:
             grade.status = data.status
@@ -65,7 +75,7 @@ class SectionAdminService:
 
     @staticmethod
     def archive_grade_level(db: Session, grade_id: int, admin: Accounts, request: Request) -> GradeLevels:
-        grade = db.query(GradeLevels).filter(GradeLevels.id == grade_id).first()
+        grade = db.query(GradeLevels).filter(GradeLevels.id == grade_id, GradeLevels.name.in_(ALLOWED_GRADE_NAMES)).first()
         if not grade:
             raise HTTPException(status_code=404, detail="Grade level not found")
         
@@ -82,7 +92,7 @@ class SectionAdminService:
 
     @staticmethod
     def restore_grade_level(db: Session, grade_id: int, admin: Accounts, request: Request) -> GradeLevels:
-        grade = db.query(GradeLevels).filter(GradeLevels.id == grade_id).first()
+        grade = db.query(GradeLevels).filter(GradeLevels.id == grade_id, GradeLevels.name.in_(ALLOWED_GRADE_NAMES)).first()
         if not grade:
             raise HTTPException(status_code=404, detail="Grade level not found")
         
@@ -160,6 +170,8 @@ class SectionAdminService:
         page: int = 1,
         per_page: int = 20,
     ):
+        if grade_level_id is not None:
+            get_grade_level_or_404(grade_level_id, db)
         return SectionRepository.list_sections(
             db,
             grade_level_id=grade_level_id,
@@ -181,9 +193,7 @@ class SectionAdminService:
         if existing:
             raise HTTPException(status_code=400, detail="Section already exists in this Grade Level and School Year.")
 
-        grade = db.query(GradeLevels).filter(GradeLevels.id == data.grade_level_id).first()
-        if not grade:
-            raise HTTPException(status_code=400, detail="Invalid Grade Level ID")
+        grade = get_grade_level_or_404(data.grade_level_id, db)
 
         sy = db.query(SchoolYear).filter(SchoolYear.id == data.school_year_id).first()
         if not sy:
@@ -228,6 +238,7 @@ class SectionAdminService:
         name_val = data.name if data.name is not None else section.name
         grade_val = data.grade_level_id if data.grade_level_id is not None else section.grade_level_id
         sy_val = data.school_year_id if data.school_year_id is not None else section.school_year_id
+        get_grade_level_or_404(grade_val, db)
 
         if name_val != section.name or grade_val != section.grade_level_id or sy_val != section.school_year_id:
             existing = db.query(Section).filter(

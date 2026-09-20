@@ -2,9 +2,11 @@ from typing import List, Optional, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 from models.section import Section
+from models.grade_levels import GradeLevels
 from models.student_profile import StudentProfile
 from models.accounts import Accounts
 from utils.enum import SectionStatusEnum, AccountStatusEnum
+from services.academic_service import ALLOWED_GRADE_NAMES
 
 class SectionRepository:
     @staticmethod
@@ -28,7 +30,8 @@ class SectionRepository:
         page: int = 1,
         per_page: int = 20,
     ) -> Tuple[int, List[Section]]:
-        q = db.query(Section)
+        q = db.query(Section).join(GradeLevels, Section.grade_level_id == GradeLevels.id)
+        q = q.filter(GradeLevels.name.in_(ALLOWED_GRADE_NAMES))
         if grade_level_id:
             q = q.filter(Section.grade_level_id == grade_level_id)
         if school_year_id:
@@ -63,7 +66,8 @@ class SectionRepository:
 
     @staticmethod
     def count_sections(db: Session, status: Optional[SectionStatusEnum] = None, without_teacher: bool = False) -> int:
-        q = db.query(Section)
+        q = db.query(Section).join(GradeLevels, Section.grade_level_id == GradeLevels.id)
+        q = q.filter(GradeLevels.name.in_(ALLOWED_GRADE_NAMES))
         if status:
             q = q.filter(Section.status == status)
         if without_teacher:

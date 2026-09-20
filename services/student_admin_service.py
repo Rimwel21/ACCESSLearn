@@ -6,6 +6,7 @@ from models.student_transfer_history import StudentTransferHistory
 from models.student_assignment_history import StudentAssignmentHistory
 from repositories.account_repository import AccountRepository
 from repositories.section_repository import SectionRepository
+from services.academic_service import get_grade_level_or_404
 from services.audit_service import write_log
 from repositories.notification_repository import NotificationRepository
 from utils.enum import AuditActionEnum, RoleEnum, NotificationCategoryEnum, NotificationPriorityEnum
@@ -39,6 +40,7 @@ class StudentAdminService:
         to_sec = SectionRepository.get_by_id(db, data.to_section_id)
         if not to_sec or to_sec.status != "active":
             raise HTTPException(status_code=400, detail="Target section not found or archived")
+        get_grade_level_or_404(to_sec.grade_level_id, db)
 
         # Check capacity
         student_count = db.query(StudentProfile).join(Accounts).filter(

@@ -15,7 +15,7 @@ from models.teacher_module import TeacherModule
 from models.grade_levels import GradeLevels
 from models.HI_sections import HI_SECTIONS
 from schemas.teacher_class_schema import TeacherClassCreate
-from services.academic_service import get_grade_level_or_404, get_section_for_grade_or_400
+from services.academic_service import ALLOWED_GRADE_NAMES, get_grade_level_or_404, get_section_for_grade_or_400
 from utils.enum import RoleEnum
 from utils.utc_now import utc_now
 
@@ -34,7 +34,11 @@ def list_teacher_classes(request: Request, db: Session, current_user: Accounts):
         .options(
             joinedload(HI_SECTIONS.grade_level),
         )
-        .filter(HI_SECTIONS.teacher_id == current_user.id)
+        .join(HI_SECTIONS.grade_level)
+        .filter(
+            HI_SECTIONS.teacher_id == current_user.id,
+            GradeLevels.name.in_(ALLOWED_GRADE_NAMES),
+        )
         .order_by(HI_SECTIONS.grade_level_id.asc(), HI_SECTIONS.name.asc())
         .all()
     )
@@ -452,7 +456,10 @@ def list_teacher_classes(request: Request, db: Session, current_user: Accounts):
         )
         .join(GradeLevels, TeacherClass.grade_level_id == GradeLevels.id)
         .join(HI_SECTIONS, TeacherClass.section_id == HI_SECTIONS.id)
-        .filter(TeacherClass.teacher_id == current_user.id)
+        .filter(
+            TeacherClass.teacher_id == current_user.id,
+            GradeLevels.name.in_(ALLOWED_GRADE_NAMES),
+        )
         .order_by(TeacherClass.created_at.desc())
         .all()
     )
@@ -519,7 +526,11 @@ def get_teacher_class(request: Request, class_id: int, db: Session, current_user
         )
         .join(GradeLevels, TeacherClass.grade_level_id == GradeLevels.id)
         .join(HI_SECTIONS, TeacherClass.section_id == HI_SECTIONS.id)
-        .filter(TeacherClass.id == class_id, TeacherClass.teacher_id == current_user.id)
+        .filter(
+            TeacherClass.id == class_id,
+            TeacherClass.teacher_id == current_user.id,
+            GradeLevels.name.in_(ALLOWED_GRADE_NAMES),
+        )
         .first()
     )
 
@@ -560,7 +571,11 @@ def get_teacher_dashboard_summary(request: Request, class_id: int | None, db: Se
     if class_id is None:
         classes = (
             db.query(TeacherClass)
-            .filter(TeacherClass.teacher_id == current_user.id)
+            .join(GradeLevels, TeacherClass.grade_level_id == GradeLevels.id)
+            .filter(
+                TeacherClass.teacher_id == current_user.id,
+                GradeLevels.name.in_(ALLOWED_GRADE_NAMES),
+            )
             .all()
         )
     else:
@@ -606,7 +621,11 @@ def list_teacher_student_records(
         classes = (
             db.query(TeacherClass)
             .options(joinedload(TeacherClass.grade_levels), joinedload(TeacherClass.sections))
-            .filter(TeacherClass.teacher_id == current_user.id)
+            .join(GradeLevels, TeacherClass.grade_level_id == GradeLevels.id)
+            .filter(
+                TeacherClass.teacher_id == current_user.id,
+                GradeLevels.name.in_(ALLOWED_GRADE_NAMES),
+            )
             .all()
         )
     else:

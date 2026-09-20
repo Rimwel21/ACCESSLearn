@@ -4,11 +4,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 from models.accounts import Accounts
 from models.HI_sections import HI_SECTIONS
+from models.grade_levels import GradeLevels
 from models.student_profile import StudentProfile
 from models.teacher_class import TeacherClass
 from schemas.create_section_schema import SectionCreate, SectionUpdate
 from utils.enum import AuditActionEnum, RoleEnum
-from services.academic_service import get_grade_level_or_404
+from services.academic_service import ALLOWED_GRADE_NAMES, get_grade_level_or_404
 from services.audit_service import write_log
 
 def _get_admin_account(current_user: Accounts):
@@ -62,18 +63,27 @@ def get_section_students(section_id: int, db: Session, current_user: Accounts):
     """Return all students enrolled in the given hi_section."""
     _get_admin_account(current_user)
 
-    section = db.query(HI_SECTIONS).filter(HI_SECTIONS.id == section_id).first()
+    section = (
+        db.query(HI_SECTIONS)
+        .join(HI_SECTIONS.grade_level)
+        .filter(HI_SECTIONS.id == section_id, GradeLevels.name.in_(ALLOWED_GRADE_NAMES))
+        .first()
+    )
     if not section:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Section not found")
 
     students = (
         db.query(StudentProfile)
+        .join(StudentProfile.grade_level)
         .options(
             joinedload(StudentProfile.grade_level),
             joinedload(StudentProfile.section),
             joinedload(StudentProfile.student_account),
         )
-        .filter(StudentProfile.section_id == section_id)
+        .filter(
+            StudentProfile.section_id == section_id,
+            GradeLevels.name.in_(ALLOWED_GRADE_NAMES),
+        )
         .order_by(StudentProfile.name.asc())
         .all()
     )
@@ -103,16 +113,11 @@ def transfer_student_hi_section(
     """Transfer a student (identified by student_profile.id) to a new hi_section."""
     _get_admin_account(current_user)
 
-    from models.grade_levels import GradeLevels
-
     student = db.query(StudentProfile).filter(StudentProfile.id == student_id).first()
     if not student:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student not found")
 
-    # Validate target grade level
-    target_grade = db.query(GradeLevels).filter(GradeLevels.id == grade_level_id).first()
-    if not target_grade:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Target grade level not found")
+    get_grade_level_or_404(grade_level_id, db)
 
     # Validate target section
     target_section = db.query(HI_SECTIONS).filter(HI_SECTIONS.id == section_id).first()
@@ -323,6 +328,8 @@ def list_sections_with_teacher(db: Session):
     sections = (
         db.query(HI_SECTIONS)
         .options(joinedload(HI_SECTIONS.grade_level), joinedload(HI_SECTIONS.teacher))
+        .join(HI_SECTIONS.grade_level)
+        .filter(GradeLevels.name.in_(ALLOWED_GRADE_NAMES))
         .order_by(HI_SECTIONS.grade_level_id.asc(), HI_SECTIONS.name.asc())
         .all()
     )
