@@ -15,6 +15,7 @@ from routes.refresh_token import router as refresh_router
 from routes.academic_route import router as academic_router
 from routes.profile_route import router as account_profile
 from routes.teacher_class_route import router as teacher_classes
+from routes.teacher_section_route import router as teacher_sections
 from routes.teacher_module_route import router as teacher_modules
 from routes.teacher_assessment_route import router as teacher_assessments
 from routes.student_module_route import activities_router as student_activities
@@ -118,6 +119,7 @@ app.include_router(academic_router)
 app.include_router(account_profile)
 app.include_router(refresh_router)
 app.include_router(teacher_classes)
+app.include_router(teacher_sections)
 app.include_router(teacher_modules)
 app.include_router(teacher_assessments)
 app.include_router(student_modules)

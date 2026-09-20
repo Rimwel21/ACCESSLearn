@@ -458,6 +458,7 @@ def list_teacher_classes(request: Request, db: Session, current_user: Accounts):
         .join(HI_SECTIONS, TeacherClass.section_id == HI_SECTIONS.id)
         .filter(
             TeacherClass.teacher_id == current_user.id,
+            HI_SECTIONS.teacher_id == current_user.id,
             GradeLevels.name.in_(ALLOWED_GRADE_NAMES),
         )
         .order_by(TeacherClass.created_at.desc())
@@ -529,6 +530,7 @@ def get_teacher_class(request: Request, class_id: int, db: Session, current_user
         .filter(
             TeacherClass.id == class_id,
             TeacherClass.teacher_id == current_user.id,
+            HI_SECTIONS.teacher_id == current_user.id,
             GradeLevels.name.in_(ALLOWED_GRADE_NAMES),
         )
         .first()
@@ -574,6 +576,7 @@ def get_teacher_dashboard_summary(request: Request, class_id: int | None, db: Se
             .join(GradeLevels, TeacherClass.grade_level_id == GradeLevels.id)
             .filter(
                 TeacherClass.teacher_id == current_user.id,
+                HI_SECTIONS.teacher_id == current_user.id,
                 GradeLevels.name.in_(ALLOWED_GRADE_NAMES),
             )
             .all()
@@ -624,6 +627,7 @@ def list_teacher_student_records(
             .join(GradeLevels, TeacherClass.grade_level_id == GradeLevels.id)
             .filter(
                 TeacherClass.teacher_id == current_user.id,
+                HI_SECTIONS.teacher_id == current_user.id,
                 GradeLevels.name.in_(ALLOWED_GRADE_NAMES),
             )
             .all()
