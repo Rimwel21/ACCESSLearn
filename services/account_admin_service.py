@@ -18,6 +18,7 @@ from models.teacher_profile import TeacherProfile
 from repositories.account_repository import AccountRepository
 from utils.enum import AccountStatusEnum, RoleEnum, AuditActionEnum, BulkActionEnum, VerificationStatus
 from services.audit_service import write_log
+from services.academic_service import ALLOWED_GRADE_NAMES
 
 def list_accounts(
     db:             Session,
@@ -49,6 +50,13 @@ def list_accounts(
         .outerjoin(GradeLevels, GradeLevels.id == StudentProfile.grade_level_id)
         .outerjoin(HI_SECTIONS, HI_SECTIONS.id == StudentProfile.section_id)
         .filter(Accounts.role != RoleEnum.admin)
+    )
+
+    q = q.filter(
+        or_(
+            Accounts.role != RoleEnum.student,
+            GradeLevels.name.in_(ALLOWED_GRADE_NAMES),
+        )
     )
 
     if role:

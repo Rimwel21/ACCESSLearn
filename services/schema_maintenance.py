@@ -19,6 +19,9 @@ from models.teacher_invitation import TeacherInvitation
 from utils.enum import AccountStatusEnum, AuditActionEnum, SectionStatusEnum
 
 
+SUPPORTED_GRADE_NAMES = ("Grade 4", "Grade 5", "Grade 6")
+
+
 def ensure_academic_tables() -> None:
     """Create legacy academic tables when an existing DB is missing them."""
     inspector = inspect(engine)
@@ -185,16 +188,26 @@ def _seed_default_academic_options() -> None:
         if not grade_levels:
             grade_levels = [
                 GradeLevels(name=f"Grade {level}", status=SectionStatusEnum.active)
-                for level in range(1, 7)
+                for level in range(4, 7)
             ]
             db.add_all(grade_levels)
+            db.commit()
+        else:
+            for grade_name in SUPPORTED_GRADE_NAMES:
+                if not any(grade.name == grade_name for grade in grade_levels):
+                    db.add(GradeLevels(name=grade_name, status=SectionStatusEnum.active))
             db.commit()
 
         section_count = db.query(HI_SECTIONS).count()
         if section_count:
             return
 
-        grade_levels = db.query(GradeLevels).order_by(GradeLevels.id.asc()).all()
+        grade_levels = (
+            db.query(GradeLevels)
+            .filter(GradeLevels.name.in_(SUPPORTED_GRADE_NAMES))
+            .order_by(GradeLevels.id.asc())
+            .all()
+        )
         db.add_all([
             HI_SECTIONS(name="Section A", grade_level_id=grade_level.id)
             for grade_level in grade_levels
