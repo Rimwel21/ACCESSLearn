@@ -20,8 +20,15 @@ from schemas.handsign.tutorial import (
     SequenceScoreResponse,
     TutorialStatus,
 )
-from schemas.handsign.dataset import WordGestureSampleCreate
-from services.handsign.dataset_admin_service import admin_dataset_summary, save_word_gesture_sample, start_training
+from schemas.handsign.dataset import DatasetLabelCreate, DatasetWeekCreate, WordGestureSampleCreate
+from services.handsign.dataset_admin_service import (
+    add_dataset_week,
+    add_dataset_label,
+    admin_dataset_summary,
+    save_word_gesture_sample,
+    start_training,
+    week_labels,
+)
 from services.handsign.response_mapper import to_prediction_response
 from services.handsign.tutorial_service import save_practice_result, save_tutorial_video, tutorial_status
 from services.handsign.word_frame_scoring_service import score_frame_sequence
@@ -136,16 +143,58 @@ def _ensure_admin(current_user: Accounts):
 
 
 @router.get("/admin/dataset")
-def admin_dataset(current_user: Accounts = Depends(get_current_user)) -> dict:
+def admin_dataset(db: Session = Depends(get_db), current_user: Accounts = Depends(get_current_user)) -> dict:
     _ensure_admin(current_user)
-    return admin_dataset_summary()
+    return admin_dataset_summary(db)
+
+
+@router.post("/admin/dataset/labels")
+def create_admin_dataset_label(
+    payload: DatasetLabelCreate,
+    db: Session = Depends(get_db),
+    current_user: Accounts = Depends(get_current_user),
+) -> dict:
+    _ensure_admin(current_user)
+    try:
+        return add_dataset_label(payload.label, payload.week, db)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/admin/dataset/weeks")
+def create_admin_dataset_week(
+    payload: DatasetWeekCreate,
+    db: Session = Depends(get_db),
+    current_user: Accounts = Depends(get_current_user),
+) -> dict:
+    _ensure_admin(current_user)
+    try:
+        return add_dataset_week(payload.week, db)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/dataset/labels")
+def dataset_labels_for_week(
+    week: str,
+    db: Session = Depends(get_db),
+    current_user: Accounts = Depends(get_current_user),
+) -> dict[str, object]:
+    try:
+        return {"week": week, "labels": week_labels(week, db)}
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post("/admin/dataset/samples")
-def upload_admin_dataset_sample(payload: WordGestureSampleCreate, current_user: Accounts = Depends(get_current_user)) -> dict:
+def upload_admin_dataset_sample(
+    payload: WordGestureSampleCreate,
+    db: Session = Depends(get_db),
+    current_user: Accounts = Depends(get_current_user),
+) -> dict:
     _ensure_admin(current_user)
     try:
-        return save_word_gesture_sample(payload.label, payload.week, payload.images)
+        return save_word_gesture_sample(payload.label, payload.week, payload.images, db)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

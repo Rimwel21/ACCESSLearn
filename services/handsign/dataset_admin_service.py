@@ -6,8 +6,11 @@ from datetime import datetime, timezone
 
 import cv2
 import numpy as np
+from sqlalchemy.orm import Session
 
 from core.handsign_config import get_handsign_settings
+from models.handsign_dataset_label import HandsignDatasetLabel
+from models.handsign_dataset_week import HandsignDatasetWeek
 from utils.handsign.image import decode_base64_image
 from utils.handsign.science_vocabulary import SUPPORTED_SCIENCE_SIGNS, WEEKLY_SCIENCE_SIGN_LABELS, canonical_word
 from utils.handsign.word_gesture_features import FEATURE_VERSION, FRAME_FEATURE_LENGTH, holistic_result_to_feature_vector, resample_sequence
@@ -17,28 +20,97 @@ _training_lock = threading.Lock()
 _training_status = {"status": "idle", "message": "No training job has started yet.", "started_at": None, "finished_at": None}
 
 
-def _group_and_label(label: str, week: str | None):
+def normalize_week(week: str | None) -> str:
+    digits = "".join(character for character in str(week or "").upper() if character.isdigit())
+    if digits not in {str(number) for number in range(1, 1000)}:
+        raise ValueError("Choose a week from Week 1 through Week 999.")
+    return f"WEEK{digits}"
+
+
+def _seed_default_labels(db: Session) -> None:
+    for number in range(1, 9):
+        _ensure_week(db, f"WEEK{number}")
+    for week, labels in WEEKLY_SCIENCE_SIGN_LABELS.items():
+        if week not in {f"WEEK{number}" for number in range(1, 9)}:
+            continue
+        for label in labels:
+            target = canonical_word(label)
+            exists = db.query(HandsignDatasetLabel.id).filter_by(week=week, label=target).first()
+            if not exists:
+                db.add(HandsignDatasetLabel(week=week, label=target))
+    db.commit()
+
+
+def _ensure_week(db: Session, week: str) -> None:
+    if not db.query(HandsignDatasetWeek.id).filter_by(key=week).first():
+        db.add(HandsignDatasetWeek(key=week))
+
+
+def available_weeks(db: Session) -> list[str]:
+    _seed_default_labels(db)
+    weeks = [row.key for row in db.query(HandsignDatasetWeek).all()]
+    return sorted(weeks, key=lambda week: int(week.removeprefix("WEEK")))
+
+
+def add_dataset_week(week: str, db: Session) -> dict[str, str | bool]:
+    target = normalize_week(week)
+    _seed_default_labels(db)
+    existing = db.query(HandsignDatasetWeek.id).filter_by(key=target).first()
+    if existing:
+        return {"week": target, "created": False}
+    db.add(HandsignDatasetWeek(key=target))
+    db.commit()
+    return {"week": target, "created": True}
+
+
+def weekly_label_catalog(db: Session) -> dict[str, list[str]]:
+    _seed_default_labels(db)
+    catalog = {week: [] for week in available_weeks(db)}
+    for item in db.query(HandsignDatasetLabel).order_by(HandsignDatasetLabel.week, HandsignDatasetLabel.label).all():
+        catalog.setdefault(item.week, []).append(item.label)
+    return catalog
+
+
+def add_dataset_label(label: str, week: str, db: Session) -> dict[str, str | bool]:
     target = canonical_word(label)
-    group = canonical_word(week) if week else None
-    if target not in SUPPORTED_SCIENCE_SIGNS:
-        raise ValueError("Choose a configured science sign label.")
-    if group and (group not in WEEKLY_SCIENCE_SIGN_LABELS or target not in WEEKLY_SCIENCE_SIGN_LABELS[group]):
+    if not target:
+        raise ValueError("Enter a valid label.")
+    group = normalize_week(week)
+    _seed_default_labels(db)
+    _ensure_week(db, group)
+    existing = db.query(HandsignDatasetLabel).filter_by(week=group, label=target).first()
+    if existing:
+        return {"label": target, "week": group, "created": False}
+    db.add(HandsignDatasetLabel(week=group, label=target))
+    db.commit()
+    return {"label": target, "week": group, "created": True}
+
+
+def week_labels(week: str, db: Session) -> list[str]:
+    return weekly_label_catalog(db).get(normalize_week(week), [])
+
+
+def _group_and_label(label: str, week: str | None, db: Session):
+    target = canonical_word(label)
+    group = normalize_week(week)
+    if target not in week_labels(group, db):
         raise ValueError("That label is not assigned to the selected week.")
     return group, target
 
 
-def admin_dataset_summary():
+def admin_dataset_summary(db: Session):
     from services.handsign.word_gesture_service import word_gesture_summary
     return {
         **word_gesture_summary(),
         "samples_required": SAMPLES_REQUIRED,
-        "weekly_labels": WEEKLY_SCIENCE_SIGN_LABELS,
+        "weekly_labels": weekly_label_catalog(db),
+        "weeks": available_weeks(db),
         "training": _training_status.copy(),
     }
 
 
-def save_word_gesture_sample(label: str, week: str | None, images: list[str]):
-    group, target = _group_and_label(label, week)
+def save_word_gesture_sample(label: str, week: str | None, images: list[str], db: Session):
+    group, target = _group_and_label(label, week, db)
     if len(images) != SAMPLES_REQUIRED:
         raise ValueError(f"Each recording must contain exactly {SAMPLES_REQUIRED} frames.")
 

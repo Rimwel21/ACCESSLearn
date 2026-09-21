@@ -9,10 +9,12 @@ from models.student_quiz_progress import StudentQuizProgress
 from models.teacher_assessment import TeacherAssessment
 from models.teacher_class import TeacherClass
 from models.teacher_module import TeacherModule
+from models.teacher_activity_week import TeacherActivityWeek
 from schemas.teacher_assessment_schema import TeacherAssessmentCreate, TeacherAssessmentUpdate
 from services.push_notification_service import queue_assessment_notification
+from services.handsign.dataset_admin_service import week_labels
+from utils.handsign.science_vocabulary import canonical_word
 from utils.enum import RoleEnum
-from utils.options import ALLOWED_LEARNING_WEEKS
 from utils.utc_now import utc_now
 
 
@@ -44,6 +46,7 @@ def create_teacher_assessment(request: Request, assessment: TeacherAssessmentCre
     _ensure_teacher(current_user)
     _validate_assessment_assignment(assessment, db, current_user)
     _validate_week(assessment.week)
+    _validate_weekly_identification_answers(assessment.assessment_type, assessment.week, assessment.questions, db)
     time_limit_seconds = _validate_time_limit_seconds(
         assessment.assessment_type,
         assessment.time_limit_seconds,
@@ -90,6 +93,10 @@ def update_teacher_assessment(request: Request, assessment_id: int, update: Teac
         _validate_assignment_values(assessment_type, class_id, module_id, topic_id, db, current_user)
     if "week" in update_data:
         _validate_week(update_data.get("week"))
+
+    next_week = update_data.get("week", assessment.week)
+    next_questions = update.questions if update.questions is not None else assessment.questions
+    _validate_weekly_identification_answers(assessment_type, next_week, next_questions, db)
 
     for key, value in update_data.items():
         if key in {"shuffle_questions", "show_answers_after_submission", "allow_text_answers"} and isinstance(value, bool):
@@ -284,11 +291,62 @@ def _validate_module_topic(module_id: int | None, topic_id: int | None, db: Sess
 
 
 def _validate_week(week: str | None):
-    if week is not None and week not in ALLOWED_LEARNING_WEEKS:
+    if week is not None and not re.fullmatch(r"Week ([1-9]|[1-9][0-9]{1,2})", week):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Week must be one of: {', '.join(ALLOWED_LEARNING_WEEKS)}",
+            detail="Week must be between Week 1 and Week 999.",
         )
+
+
+def list_teacher_activity_weeks(request: Request, db: Session, current_user: Accounts) -> list[str]:
+    _ensure_teacher(current_user)
+    defaults = [f"Week {number}" for number in range(1, 9)]
+    saved = [
+        row.week for row in db.query(TeacherActivityWeek)
+        .filter(TeacherActivityWeek.teacher_id == current_user.id)
+        .order_by(TeacherActivityWeek.week)
+        .all()
+    ]
+    existing_assessment_weeks = [
+        row.week for row in db.query(TeacherAssessment.week)
+        .filter(
+            TeacherAssessment.teacher_id == current_user.id,
+            TeacherAssessment.assessment_type == "activity",
+            TeacherAssessment.week.isnot(None),
+        )
+        .all()
+        if row.week
+    ]
+    return sorted(set(defaults + saved + existing_assessment_weeks), key=lambda week: int(week.removeprefix("Week ")))
+
+
+def add_teacher_activity_week(week: str, request: Request, db: Session, current_user: Accounts) -> dict[str, object]:
+    _ensure_teacher(current_user)
+    _validate_week(week)
+    existing = db.query(TeacherActivityWeek).filter_by(teacher_id=current_user.id, week=week).first()
+    if existing:
+        return {"week": week, "created": False}
+    db.add(TeacherActivityWeek(teacher_id=current_user.id, week=week))
+    db.commit()
+    return {"week": week, "created": True}
+
+
+def _validate_weekly_identification_answers(assessment_type: str, week: str | None, questions, db: Session) -> None:
+    """Activities may only use sign labels configured for their selected week."""
+    if assessment_type != "activity" or not week:
+        return
+
+    allowed_labels = set(week_labels(week, db))
+    for index, question in enumerate(questions, start=1):
+        question_type = question.question_type if hasattr(question, "question_type") else question.get("question_type")
+        answer = question.answer if hasattr(question, "answer") else question.get("answer")
+        if question_type != "identification" or not answer:
+            continue
+        if canonical_word(answer) not in allowed_labels:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Question {index}: choose an identification answer from {week}'s Handsign labels.",
+            )
 
 
 def _validate_time_limit_seconds(assessment_type: str, seconds: int | None, text_value: str | None = None):
