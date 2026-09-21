@@ -1,6 +1,6 @@
 from datetime import datetime
 from pydantic import BaseModel, Field, field_validator
-from utils.options import ALLOWED_LEARNING_WEEKS
+import re
 
 
 class AssessmentQuestion(BaseModel):
@@ -39,8 +39,8 @@ class TeacherAssessmentCreate(TeacherAssessmentBase):
     @field_validator("week")
     @classmethod
     def validate_week(cls, value: str | None):
-        if value is not None and value not in ALLOWED_LEARNING_WEEKS:
-            raise ValueError(f"Week must be one of: {', '.join(ALLOWED_LEARNING_WEEKS)}")
+        if value is not None and not re.fullmatch(r"Week ([1-9]|[1-9][0-9]{1,2})", value):
+            raise ValueError("Week must be between Week 1 and Week 999.")
         return value
 
 
@@ -64,8 +64,19 @@ class TeacherAssessmentUpdate(BaseModel):
     @field_validator("week")
     @classmethod
     def validate_week(cls, value: str | None):
-        if value is not None and value not in ALLOWED_LEARNING_WEEKS:
-            raise ValueError(f"Week must be one of: {', '.join(ALLOWED_LEARNING_WEEKS)}")
+        if value is not None and not re.fullmatch(r"Week ([1-9]|[1-9][0-9]{1,2})", value):
+            raise ValueError("Week must be between Week 1 and Week 999.")
+        return value
+
+
+class TeacherActivityWeekCreate(BaseModel):
+    week: str = Field(min_length=1, max_length=30)
+
+    @field_validator("week")
+    @classmethod
+    def validate_week(cls, value: str):
+        if not re.fullmatch(r"Week ([1-9]|[1-9][0-9]{1,2})", value):
+            raise ValueError("Week must be between Week 1 and Week 999.")
         return value
 
 

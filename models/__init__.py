@@ -18,3 +18,6 @@ from models.teacher_section_assignments import TeacherSectionAssignment
 from models.push_notification import DeadlineNotificationLog, PushSubscription
 
 from models.handsign_tutorial_practice import HandsignTutorialPractice
+from models.handsign_dataset_label import HandsignDatasetLabel
+from models.handsign_dataset_week import HandsignDatasetWeek
+from models.teacher_activity_week import TeacherActivityWeek

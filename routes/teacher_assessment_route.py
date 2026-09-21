@@ -3,11 +3,13 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from limiter import limiter
 from models.accounts import Accounts
-from schemas.teacher_assessment_schema import TeacherAssessmentCreate, TeacherAssessmentOut, TeacherAssessmentUpdate
+from schemas.teacher_assessment_schema import TeacherActivityWeekCreate, TeacherAssessmentCreate, TeacherAssessmentOut, TeacherAssessmentUpdate
 from services.teacher_assessment_service import (
+    add_teacher_activity_week,
     create_teacher_assessment,
     delete_teacher_assessment,
     list_retake_requests,
+    list_teacher_activity_weeks,
     list_teacher_assessments,
     review_retake_request,
     set_student_retake_access,
@@ -21,6 +23,18 @@ router = APIRouter(prefix="/teacher/assessments", tags=["Teacher Assessments"])
 
 class RetakeReviewBody(BaseModel):
     action: str
+
+
+@router.get("/activity-weeks")
+@limiter.limit("30/minute")
+def list_teacher_activity_weeks_route(request: Request, db: Session = Depends(get_db), current_user: Accounts = Depends(get_current_user)):
+    return {"weeks": list_teacher_activity_weeks(request=request, db=db, current_user=current_user)}
+
+
+@router.post("/activity-weeks")
+@limiter.limit("10/minute")
+def add_teacher_activity_week_route(request: Request, payload: TeacherActivityWeekCreate, db: Session = Depends(get_db), current_user: Accounts = Depends(get_current_user)):
+    return add_teacher_activity_week(payload.week, request=request, db=db, current_user=current_user)
 
 
 @router.get("/retake-requests")

@@ -10,6 +10,9 @@ from models.audit_log import AuditLog  # noqa: F401 - register mapper relationsh
 from models.HI_sections import HI_SECTIONS
 from models.grade_levels import GradeLevels
 from models.handsign_tutorial_practice import HandsignTutorialPractice
+from models.handsign_dataset_label import HandsignDatasetLabel
+from models.handsign_dataset_week import HandsignDatasetWeek
+from models.teacher_activity_week import TeacherActivityWeek
 from models.notification import Notification
 from models.push_notification import DeadlineNotificationLog, PushSubscription
 from models.school_year import SchoolYear
@@ -52,6 +55,9 @@ def ensure_academic_tables() -> None:
     _ensure_teacher_assessments_schema()
     _ensure_assessment_retake_request_schema()
     _ensure_handsign_tutorial_practice_schema()
+    _ensure_handsign_dataset_label_schema()
+    _ensure_handsign_dataset_week_schema()
+    _ensure_teacher_activity_week_schema()
     _ensure_notification_schema()
     _ensure_teacher_invitation_schema()
     _ensure_push_notification_schema()
@@ -179,6 +185,21 @@ def _ensure_handsign_tutorial_practice_schema() -> None:
     inspector = inspect(engine)
     if not inspector.has_table(HandsignTutorialPractice.__tablename__):
         HandsignTutorialPractice.__table__.create(bind=engine, checkfirst=True)
+
+
+def _ensure_handsign_dataset_label_schema() -> None:
+    if not inspect(engine).has_table(HandsignDatasetLabel.__tablename__):
+        HandsignDatasetLabel.__table__.create(bind=engine, checkfirst=True)
+
+
+def _ensure_handsign_dataset_week_schema() -> None:
+    if not inspect(engine).has_table(HandsignDatasetWeek.__tablename__):
+        HandsignDatasetWeek.__table__.create(bind=engine, checkfirst=True)
+
+
+def _ensure_teacher_activity_week_schema() -> None:
+    if not inspect(engine).has_table(TeacherActivityWeek.__tablename__):
+        TeacherActivityWeek.__table__.create(bind=engine, checkfirst=True)
 
 
 def _seed_default_academic_options() -> None:
