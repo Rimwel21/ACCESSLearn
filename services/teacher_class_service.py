@@ -82,21 +82,33 @@ def create_teacher_class(request: Request, teacher_class, db: Session, current_u
 
 
 
+def _get_assigned_section(class_id: int, db: Session, current_user: Accounts) -> HI_SECTIONS:
+    """Resolve a section ID or legacy TeacherClass ID to a teacher-owned section."""
+    section = (
+        db.query(HI_SECTIONS)
+        .filter(HI_SECTIONS.id == class_id, HI_SECTIONS.teacher_id == current_user.id)
+        .first()
+    )
+    if section:
+        return section
+
+    teacher_class = (
+        db.query(TeacherClass)
+        .options(joinedload(TeacherClass.sections))
+        .filter(TeacherClass.id == class_id, TeacherClass.teacher_id == current_user.id)
+        .first()
+    )
+    if teacher_class and teacher_class.sections and teacher_class.sections.teacher_id == current_user.id:
+        return teacher_class.sections
+
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assigned class not found")
+
+
 def get_teacher_class(request: Request, class_id: int, db: Session, current_user: Accounts):
     """Look up an admin-assigned hi_section by id, verifying teacher ownership."""
     _ensure_teacher(current_user)
 
-    section = (
-        db.query(HI_SECTIONS)
-        .options(joinedload(HI_SECTIONS.grade_level))
-        .filter(HI_SECTIONS.id == class_id, HI_SECTIONS.teacher_id == current_user.id)
-        .first()
-    )
-
-    if not section:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assigned class not found")
-
-    return section
+    return _get_assigned_section(class_id, db, current_user)
 
 
 def delete_teacher_class(request: Request, class_id: int, db: Session, current_user: Accounts):
@@ -110,21 +122,14 @@ def delete_teacher_class(request: Request, class_id: int, db: Session, current_u
 def list_class_students(request: Request, class_id: int, db: Session, current_user: Accounts):
     """Return students enrolled in the given assigned section."""
     _ensure_teacher(current_user)
-
-    section = (
-        db.query(HI_SECTIONS)
-        .filter(HI_SECTIONS.id == class_id, HI_SECTIONS.teacher_id == current_user.id)
-        .first()
-    )
-    if not section:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assigned class not found")
+    section = _get_assigned_section(class_id, db, current_user)
 
     students = (
         db.query(StudentProfile)
         .options(joinedload(StudentProfile.grade_level), joinedload(StudentProfile.section))
         .join(Accounts, Accounts.id == StudentProfile.account_id)
         .filter(
-            StudentProfile.section_id == class_id,
+            StudentProfile.section_id == section.id,
             Accounts.role == RoleEnum.student,
         )
         .order_by(StudentProfile.name.asc())
@@ -137,11 +142,14 @@ def get_teacher_dashboard_summary(request: Request, class_id: int | None, db: Se
     _ensure_teacher(current_user)
 
     # Use admin-assigned hi_sections for student scoping
-    assigned_sections = (
-        db.query(HI_SECTIONS)
-        .filter(HI_SECTIONS.teacher_id == current_user.id)
-        .all()
-    )
+    if class_id is not None:
+        assigned_sections = [_get_assigned_section(class_id, db, current_user)]
+    else:
+        assigned_sections = (
+            db.query(HI_SECTIONS)
+            .filter(HI_SECTIONS.teacher_id == current_user.id)
+            .all()
+        )
 
     if not assigned_sections:
         return {
@@ -165,11 +173,6 @@ def get_teacher_dashboard_summary(request: Request, class_id: int | None, db: Se
     )
     student_ids = [s.account_id for s in students]
 
-    published_module_count = db.query(TeacherModule).filter(
-        TeacherModule.teacher_id == current_user.id,
-        TeacherModule.status == "Published",
-    ).count()
-
     # For quiz average, collect all teacher classes linked to these sections
     classes = (
         db.query(TeacherClass)
@@ -180,6 +183,11 @@ def get_teacher_dashboard_summary(request: Request, class_id: int | None, db: Se
         .all()
     )
     class_ids = [c.id for c in classes]
+    published_module_count = db.query(TeacherModule).filter(
+        TeacherModule.teacher_id == current_user.id,
+        TeacherModule.status == "Published",
+        TeacherModule.class_id.in_(class_ids),
+    ).count() if class_ids else 0
     quiz_average = _average_quiz_score(student_ids, class_ids, db, current_user)
 
     student_progress = [
@@ -445,171 +453,6 @@ def _progress_status_label(percent: int) -> str:
     return "Excellent"
 
 
-def list_teacher_classes(request: Request, db: Session, current_user: Accounts):
-    _ensure_teacher(current_user)
-
-    classes = (
-        db.query(TeacherClass)
-        .options(
-            joinedload(TeacherClass.grade_levels),
-            joinedload(TeacherClass.sections),
-        )
-        .join(GradeLevels, TeacherClass.grade_level_id == GradeLevels.id)
-        .join(HI_SECTIONS, TeacherClass.section_id == HI_SECTIONS.id)
-        .filter(
-            TeacherClass.teacher_id == current_user.id,
-            HI_SECTIONS.teacher_id == current_user.id,
-            GradeLevels.name.in_(ALLOWED_GRADE_NAMES),
-        )
-        .order_by(TeacherClass.created_at.desc())
-        .all()
-    )
-    for teacher_class in classes:
-        teacher_class.student_count = _count_matching_students(teacher_class, db)
-    return classes
-
-
-def create_teacher_class(request: Request, teacher_class: TeacherClassCreate, db: Session, current_user: Accounts):
-    _ensure_teacher(current_user)
-
-    grade_level = get_grade_level_or_404(teacher_class.grade_level_id, db)
-    section = _resolve_manual_section(teacher_class, db)
-
-    new_teacher_class = TeacherClass(
-        teacher_id=current_user.id,
-        class_name=teacher_class.class_name.strip(),
-        subject=teacher_class.subject.strip(),
-        grade_level_id=teacher_class.grade_level_id,
-        section_id=section.id,
-        school_year=teacher_class.school_year.strip() if teacher_class.school_year else None,
-        student_count=0,
-    )
-
-    db.add(new_teacher_class)
-
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Class already exists for this teacher, subject, grade level, and section",
-        )
-
-    db.refresh(new_teacher_class)
-    new_teacher_class.student_count = _count_matching_students(new_teacher_class, db)
-
-    result = (
-        db.query(TeacherClass)
-        .options(
-            joinedload(TeacherClass.grade_levels),
-            joinedload(TeacherClass.sections),
-        )
-        .filter(TeacherClass.id == new_teacher_class.id)
-        .first()
-    )
-
-    if not result:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Unable to load created class")
-
-    result.student_count = _count_matching_students(result, db)
-    return result
-
-
-def get_teacher_class(request: Request, class_id: int, db: Session, current_user: Accounts):
-    _ensure_teacher(current_user)
-
-    teacher_class = (
-        db.query(TeacherClass)
-        .options(
-            joinedload(TeacherClass.grade_levels),
-            joinedload(TeacherClass.sections),
-        )
-        .join(GradeLevels, TeacherClass.grade_level_id == GradeLevels.id)
-        .join(HI_SECTIONS, TeacherClass.section_id == HI_SECTIONS.id)
-        .filter(
-            TeacherClass.id == class_id,
-            TeacherClass.teacher_id == current_user.id,
-            HI_SECTIONS.teacher_id == current_user.id,
-            GradeLevels.name.in_(ALLOWED_GRADE_NAMES),
-        )
-        .first()
-    )
-
-    if not teacher_class:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Class not found")
-
-    teacher_class.student_count = _count_matching_students(teacher_class, db)
-    return teacher_class
-
-
-def delete_teacher_class(request: Request, class_id: int, db: Session, current_user: Accounts):
-    teacher_class = get_teacher_class(
-        request=request,
-        class_id=class_id,
-        db=db,
-        current_user=current_user,
-    )
-
-    db.delete(teacher_class)
-    db.commit()
-
-    return {"detail": "Class deleted successfully"}
-
-
-def list_class_students(request: Request, class_id: int, db: Session, current_user: Accounts):
-    teacher_class = get_teacher_class(
-        request=request,
-        class_id=class_id,
-        db=db,
-        current_user=current_user,
-    )
-
-    return _matching_student_query(teacher_class, db).all()
-
-
-def get_teacher_dashboard_summary(request: Request, class_id: int | None, db: Session, current_user: Accounts):
-    _ensure_teacher(current_user)
-    if class_id is None:
-        classes = (
-            db.query(TeacherClass)
-            .join(GradeLevels, TeacherClass.grade_level_id == GradeLevels.id)
-            .filter(
-                TeacherClass.teacher_id == current_user.id,
-                HI_SECTIONS.teacher_id == current_user.id,
-                GradeLevels.name.in_(ALLOWED_GRADE_NAMES),
-            )
-            .all()
-        )
-    else:
-        classes = [get_teacher_class(request=request, class_id=class_id, db=db, current_user=current_user)]
-
-    students = _unique_students_for_classes(classes, db)
-    student_ids = [student.account_id for student in students]
-    class_ids = [teacher_class.id for teacher_class in classes]
-
-    module_count_filters = [
-        TeacherModule.teacher_id == current_user.id,
-        TeacherModule.status == "Published",
-    ]
-    if class_id is not None:
-        module_count_filters.append(TeacherModule.class_id == class_id)
-    published_module_count = db.query(TeacherModule).filter(*module_count_filters).count()
-
-    quiz_average = _average_quiz_score(student_ids, class_ids, db, current_user)
-    student_progress = [
-        _dashboard_progress_for_student(student, classes, db, current_user)
-        for student in students
-    ]
-
-    return {
-        "total_students": len(students),
-        "active_learning_materials": published_module_count,
-        "average_quiz_score": quiz_average,
-        "student_progress": student_progress,
-    }
-
-
 def list_teacher_student_records(
     request: Request,
     class_id: int | None,
@@ -624,6 +467,7 @@ def list_teacher_student_records(
         classes = (
             db.query(TeacherClass)
             .options(joinedload(TeacherClass.grade_levels), joinedload(TeacherClass.sections))
+            .join(HI_SECTIONS, TeacherClass.section_id == HI_SECTIONS.id)
             .join(GradeLevels, TeacherClass.grade_level_id == GradeLevels.id)
             .filter(
                 TeacherClass.teacher_id == current_user.id,
@@ -633,7 +477,16 @@ def list_teacher_student_records(
             .all()
         )
     else:
-        classes = [get_teacher_class(request=request, class_id=class_id, db=db, current_user=current_user)]
+        section = _get_assigned_section(class_id, db, current_user)
+        classes = (
+            db.query(TeacherClass)
+            .options(joinedload(TeacherClass.grade_levels), joinedload(TeacherClass.sections))
+            .filter(
+                TeacherClass.teacher_id == current_user.id,
+                TeacherClass.section_id == section.id,
+            )
+            .all()
+        )
 
     students = _unique_students_for_classes(classes, db)
     if search:
