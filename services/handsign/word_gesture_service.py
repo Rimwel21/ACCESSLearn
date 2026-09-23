@@ -3,7 +3,7 @@ from collections import Counter
 from pathlib import Path
 
 from core.handsign_config import HandSignSettings, get_handsign_settings
-from utils.handsign.science_vocabulary import WEEKLY_SCIENCE_SIGN_LABELS, canonical_word
+from utils.handsign.science_vocabulary import canonical_word
 
 
 def _settings(settings: HandSignSettings | None = None) -> HandSignSettings:
@@ -17,11 +17,12 @@ def list_dataset_classes(settings: HandSignSettings | None = None) -> list[dict[
 
     counts: Counter[str] = Counter()
     for directory in sorted(path for path in dataset_dir.iterdir() if path.is_dir()):
-        if directory.name.upper() in WEEKLY_SCIENCE_SIGN_LABELS:
-            for label_dir in sorted(path for path in directory.iterdir() if path.is_dir()):
+        label_directories = [path for path in directory.iterdir() if path.is_dir()]
+        if label_directories:
+            for label_dir in sorted(label_directories):
                 counts[canonical_word(label_dir.name)] += len(list(label_dir.glob("*.npz")))
-        else:
-            counts[canonical_word(directory.name)] += len(list(directory.glob("*.npz")))
+            continue
+        counts[canonical_word(directory.name)] += len(list(directory.glob("*.npz")))
 
     return [{"label": label, "sample_count": count} for label, count in sorted(counts.items())]
 

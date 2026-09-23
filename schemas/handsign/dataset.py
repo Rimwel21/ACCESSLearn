@@ -15,3 +15,9 @@ class DatasetLabelCreate(BaseModel):
 class DatasetWeekCreate(BaseModel):
     week: str = Field(min_length=1, max_length=30)
 
+
+class DatasetLabelSampleRequirementUpdate(BaseModel):
+    label: str = Field(min_length=1, max_length=80)
+    week: str = Field(min_length=1, max_length=30)
+    samples_required: int
+

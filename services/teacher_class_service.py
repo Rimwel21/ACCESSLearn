@@ -26,58 +26,103 @@ def _ensure_teacher(current_user: Accounts):
 
 
 def list_teacher_classes(request: Request, db: Session, current_user: Accounts):
-    """Return hi_sections that the admin has assigned to this teacher."""
+    """Return classrooms created by the teacher from administrator-created sections."""
     _ensure_teacher(current_user)
 
-    assigned_sections = (
-        db.query(HI_SECTIONS)
+    classes = (
+        db.query(TeacherClass)
         .options(
-            joinedload(HI_SECTIONS.grade_level),
+            joinedload(TeacherClass.grade_levels),
+            joinedload(TeacherClass.sections),
         )
-        .join(HI_SECTIONS.grade_level)
+        .join(HI_SECTIONS, TeacherClass.section_id == HI_SECTIONS.id)
+        .join(GradeLevels, TeacherClass.grade_level_id == GradeLevels.id)
         .filter(
+            TeacherClass.teacher_id == current_user.id,
             HI_SECTIONS.teacher_id == current_user.id,
             GradeLevels.name.in_(ALLOWED_GRADE_NAMES),
         )
-        .order_by(HI_SECTIONS.grade_level_id.asc(), HI_SECTIONS.name.asc())
+        .order_by(TeacherClass.created_at.desc())
         .all()
     )
 
-    result = []
-    for sec in assigned_sections:
-        student_count = (
-            db.query(StudentProfile)
-            .filter(StudentProfile.section_id == sec.id)
-            .count()
+    for teacher_class in classes:
+        teacher_class.student_count = db.query(StudentProfile).filter(
+            StudentProfile.section_id == teacher_class.section_id,
+        ).count()
+    return classes
+
+
+def create_teacher_class(
+    request: Request,
+    teacher_class: TeacherClassCreate,
+    db: Session,
+    current_user: Accounts,
+):
+    """Create a teacher classroom using an existing administrator-created section."""
+    _ensure_teacher(current_user)
+    if teacher_class.section_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Choose an existing section for this class",
         )
-        result.append({
-            "id": sec.id,
-            "class_name": f"{sec.grade_level.name if sec.grade_level else 'Grade'} - {sec.name}",
-            "subject": "Science",
-            "grade_levels": {
-                "id": sec.grade_level_id,
-                "name": sec.grade_level.name if sec.grade_level else "",
-            },
-            "sections": {
-                "id": sec.id,
-                "name": sec.name,
-                "grade_level_id": sec.grade_level_id,
-            },
-            "school_year": None,
-            "student_count": student_count,
-            "teacher_id": current_user.id,
-            "created_at": utc_now(),
-            "updated_at": utc_now(),
-        })
-    return result
 
-
-def create_teacher_class(request: Request, teacher_class, db: Session, current_user: Accounts):
-    """Teachers cannot create official sections. Sections are assigned by the Administrator."""
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail="Sections are created and assigned by the Administrator. Please contact your Administrator to be assigned to a section.",
+    get_grade_level_or_404(teacher_class.grade_level_id, db)
+    section = get_section_for_grade_or_400(
+        teacher_class.section_id,
+        teacher_class.grade_level_id,
+        db,
     )
+    if section.teacher_id and section.teacher_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This section is already assigned to another teacher",
+        )
+
+    existing = db.query(TeacherClass).filter(
+        TeacherClass.teacher_id == current_user.id,
+        TeacherClass.section_id == section.id,
+        TeacherClass.subject == teacher_class.subject.strip(),
+    ).first()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You already have a classroom for this section",
+        )
+
+    section.teacher_id = current_user.id
+    classroom = TeacherClass(
+        teacher_id=current_user.id,
+        class_name=teacher_class.class_name.strip(),
+        subject=teacher_class.subject.strip(),
+        grade_level_id=teacher_class.grade_level_id,
+        section_id=section.id,
+        school_year=teacher_class.school_year.strip() if teacher_class.school_year else None,
+        student_count=0,
+    )
+    db.add(classroom)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unable to create this classroom",
+        )
+
+    result = db.query(TeacherClass).options(
+        joinedload(TeacherClass.grade_levels),
+        joinedload(TeacherClass.sections),
+    ).filter(TeacherClass.id == classroom.id).first()
+    if not result:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to load the created classroom",
+        )
+    result.student_count = db.query(StudentProfile).filter(
+        StudentProfile.section_id == section.id,
+    ).count()
+    return result
 
 
 
@@ -105,10 +150,37 @@ def _get_assigned_section(class_id: int, db: Session, current_user: Accounts) ->
 
 
 def get_teacher_class(request: Request, class_id: int, db: Session, current_user: Accounts):
-    """Look up an admin-assigned hi_section by id, verifying teacher ownership."""
+    """Look up a teacher classroom, with section-ID compatibility for older clients."""
     _ensure_teacher(current_user)
 
-    return _get_assigned_section(class_id, db, current_user)
+    classroom = db.query(TeacherClass).options(
+        joinedload(TeacherClass.grade_levels),
+        joinedload(TeacherClass.sections),
+    ).filter(
+        TeacherClass.id == class_id,
+        TeacherClass.teacher_id == current_user.id,
+    ).first()
+    if classroom:
+        classroom.student_count = db.query(StudentProfile).filter(
+            StudentProfile.section_id == classroom.section_id,
+        ).count()
+        return classroom
+
+    section = _get_assigned_section(class_id, db, current_user)
+    classroom = db.query(TeacherClass).options(
+        joinedload(TeacherClass.grade_levels),
+        joinedload(TeacherClass.sections),
+    ).filter(
+        TeacherClass.teacher_id == current_user.id,
+        TeacherClass.section_id == section.id,
+    ).first()
+    if not classroom:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Classroom not found")
+
+    classroom.student_count = db.query(StudentProfile).filter(
+        StudentProfile.section_id == classroom.section_id,
+    ).count()
+    return classroom
 
 
 def delete_teacher_class(request: Request, class_id: int, db: Session, current_user: Accounts):

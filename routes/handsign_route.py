@@ -20,13 +20,21 @@ from schemas.handsign.tutorial import (
     SequenceScoreResponse,
     TutorialStatus,
 )
-from schemas.handsign.dataset import DatasetLabelCreate, DatasetWeekCreate, WordGestureSampleCreate
+from schemas.handsign.dataset import (
+    DatasetLabelCreate,
+    DatasetLabelSampleRequirementUpdate,
+    DatasetWeekCreate,
+    WordGestureSampleCreate,
+)
 from services.handsign.dataset_admin_service import (
     add_dataset_week,
     add_dataset_label,
     admin_dataset_summary,
     save_word_gesture_sample,
+    set_dataset_label_samples_required,
+    stop_training,
     start_training,
+    week_label_requirements,
     week_labels,
 )
 from services.handsign.response_mapper import to_prediction_response
@@ -181,7 +189,11 @@ def dataset_labels_for_week(
     current_user: Accounts = Depends(get_current_user),
 ) -> dict[str, object]:
     try:
-        return {"week": week, "labels": week_labels(week, db)}
+        return {
+            "week": week,
+            "labels": week_labels(week, db),
+            "requirements": week_label_requirements(week, db),
+        }
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -200,12 +212,44 @@ def upload_admin_dataset_sample(
 
 
 @router.post("/admin/dataset/train")
-def train_admin_word_model(current_user: Accounts = Depends(get_current_user)) -> dict:
+def train_admin_word_model(
+    db: Session = Depends(get_db),
+    current_user: Accounts = Depends(get_current_user),
+) -> dict:
     _ensure_admin(current_user)
     try:
-        return start_training()
+        return start_training(db)
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/admin/dataset/train/stop")
+def stop_admin_word_model(current_user: Accounts = Depends(get_current_user)) -> dict:
+    _ensure_admin(current_user)
+    try:
+        return stop_training()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.patch("/dataset/labels/sample-requirement")
+def update_dataset_label_sample_requirement(
+    payload: DatasetLabelSampleRequirementUpdate,
+    db: Session = Depends(get_db),
+    current_user: Accounts = Depends(get_current_user),
+) -> dict:
+    if current_user.role not in {RoleEnum.admin, RoleEnum.teacher}:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Administrator or teacher only")
+    try:
+        result = set_dataset_label_samples_required(payload.label, payload.week, payload.samples_required, db)
+        if result["ready_to_train"]:
+            try:
+                result["training"] = start_training(db)
+            except RuntimeError as exc:
+                result["training_message"] = str(exc)
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/tutorials/{word}", response_model=TutorialStatus)

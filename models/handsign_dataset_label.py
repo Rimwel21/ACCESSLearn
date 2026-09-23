@@ -11,4 +11,5 @@ class HandsignDatasetLabel(Base):
     id = Column(Integer, primary_key=True, nullable=False, index=True)
     week = Column(String(10), nullable=False, index=True)
     label = Column(String(80), nullable=False, index=True)
+    samples_required = Column(Integer, nullable=False, default=40)
     created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)

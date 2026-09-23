@@ -188,8 +188,28 @@ def _ensure_handsign_tutorial_practice_schema() -> None:
 
 
 def _ensure_handsign_dataset_label_schema() -> None:
-    if not inspect(engine).has_table(HandsignDatasetLabel.__tablename__):
+    table_name = HandsignDatasetLabel.__tablename__
+    inspector = inspect(engine)
+    if not inspector.has_table(table_name):
         HandsignDatasetLabel.__table__.create(bind=engine, checkfirst=True)
+        return
+
+    columns = {column["name"] for column in inspector.get_columns(table_name)}
+    if "samples_required" in columns:
+        return
+
+    is_pg = engine.dialect.name == "postgresql"
+    with engine.begin() as connection:
+        if is_pg:
+            connection.execute(text(
+                "ALTER TABLE handsign_dataset_labels "
+                "ADD COLUMN IF NOT EXISTS samples_required INTEGER NOT NULL DEFAULT 40"
+            ))
+        else:
+            connection.execute(text(
+                "ALTER TABLE handsign_dataset_labels "
+                "ADD COLUMN samples_required INTEGER NOT NULL DEFAULT 40"
+            ))
 
 
 def _ensure_handsign_dataset_week_schema() -> None:
