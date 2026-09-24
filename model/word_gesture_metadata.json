@@ -28,6 +28,7 @@
     "SUN",
     "TECHNOLOGY",
     "TELEPHONE",
+    "TESTING_ULI",
     "TOXICITY",
     "WATER"
   ],
@@ -57,9 +58,10 @@
     "SUN": 40,
     "TECHNOLOGY": 40,
     "TELEPHONE": 40,
+    "TESTING_ULI": 5,
     "TOXICITY": 40,
     "WATER": 40
   },
   "training_tree_count": 250,
-  "trained_at": "2026-09-23T18:17:20.929708+00:00"
+  "trained_at": "2026-09-24T05:47:05.888367+00:00"
 }
