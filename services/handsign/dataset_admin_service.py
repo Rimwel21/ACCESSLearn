@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import shutil
 import subprocess
 import sys
@@ -49,8 +50,9 @@ def normalize_week(week: str | None) -> str:
 
 
 def _seed_default_labels(db: Session) -> None:
+    changed = False
     for number in range(1, 9):
-        _ensure_week(db, f"WEEK{number}")
+        changed = _ensure_week(db, f"WEEK{number}") or changed
     for week, labels in WEEKLY_SCIENCE_SIGN_LABELS.items():
         if week not in {f"WEEK{number}" for number in range(1, 9)}:
             continue
@@ -59,12 +61,16 @@ def _seed_default_labels(db: Session) -> None:
             exists = db.query(HandsignDatasetLabel.id).filter_by(week=week, label=target).first()
             if not exists:
                 db.add(HandsignDatasetLabel(week=week, label=target))
-    db.commit()
+                changed = True
+    if changed:
+        db.commit()
 
 
-def _ensure_week(db: Session, week: str) -> None:
+def _ensure_week(db: Session, week: str) -> bool:
     if not db.query(HandsignDatasetWeek.id).filter_by(key=week).first():
         db.add(HandsignDatasetWeek(key=week))
+        return True
+    return False
 
 
 def available_weeks(db: Session) -> list[str]:
@@ -266,8 +272,27 @@ def _publish_completed_training() -> None:
     metadata_path = config.resolved_word_gesture_metadata_path()
     model_path.parent.mkdir(parents=True, exist_ok=True)
     metadata_path.parent.mkdir(parents=True, exist_ok=True)
-    trained_model.replace(model_path)
-    trained_metadata.replace(metadata_path)
+    _publish_training_file(trained_model, model_path)
+    _publish_training_file(trained_metadata, metadata_path)
+
+
+def _publish_training_file(source: Path, destination: Path) -> None:
+    """Publish a worker artifact even when the worker uses a different filesystem."""
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb", dir=destination.parent, prefix=f".{destination.name}.", suffix=".tmp", delete=False
+        ) as temporary_file:
+            temporary_path = Path(temporary_file.name)
+            with source.open("rb") as source_file:
+                shutil.copyfileobj(source_file, temporary_file)
+            temporary_file.flush()
+            os.fsync(temporary_file.fileno())
+        os.replace(temporary_path, destination)
+        temporary_path = None
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
 
 
 def _refresh_training_status() -> None:

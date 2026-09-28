@@ -6,10 +6,11 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import zipfile
 from uuid import uuid4
-from threading import Lock, Thread
+from threading import Lock
 from fastapi.responses import FileResponse
 from fastapi import HTTPException, Request, UploadFile, status
 from sqlalchemy.orm import Session, joinedload
@@ -53,7 +54,7 @@ PDF_MAX_TOPIC_PAGES = 5
 logger = logging.getLogger(__name__)
 _TOPIC_REGENERATION_LOCK = Lock()
 _MATERIAL_PROCESSING_LOCK = Lock()
-_MATERIAL_PROCESSING_JOBS: set[int] = set()
+_MATERIAL_PROCESSING_JOBS: dict[int, subprocess.Popen] = {}
 _FAILED_PRESENTATION_RENDER_PATHS: set[str] = set()
 PRESENTATION_RENDER_TIMEOUT_SECONDS = 180
 
@@ -429,37 +430,28 @@ def _process_material_topics(
 
 
 def _queue_material_topic_regeneration(module_id: int) -> None:
-    """Prepare file-derived topics outside the request that serves a page."""
+    """Prepare file-derived topics outside the web-server process."""
     with _MATERIAL_PROCESSING_LOCK:
-        if module_id in _MATERIAL_PROCESSING_JOBS:
+        completed_jobs = [
+            job_id for job_id, process in _MATERIAL_PROCESSING_JOBS.items()
+            if process.poll() is not None
+        ]
+        for job_id in completed_jobs:
+            _MATERIAL_PROCESSING_JOBS.pop(job_id, None)
+
+        existing_process = _MATERIAL_PROCESSING_JOBS.get(module_id)
+        if existing_process is not None and existing_process.poll() is None:
             return
-        _MATERIAL_PROCESSING_JOBS.add(module_id)
-
-    Thread(target=_regenerate_material_topics_in_background, args=(module_id,), daemon=True).start()
-
-
-def _regenerate_material_topics_in_background(module_id: int) -> None:
-    from database.connection import SessionLocal
-
-    db = SessionLocal()
-    try:
-        module = (
-            db.query(TeacherModule)
-            .options(joinedload(TeacherModule.topics))
-            .filter(TeacherModule.id == module_id)
-            .first()
-        )
-        if module and _needs_material_topic_regeneration(module):
-            with _TOPIC_REGENERATION_LOCK:
-                db.expire(module, ["topics"])
-                if _needs_material_topic_regeneration(module):
-                    _process_material_topics(db, module, Path(module.file_path))
-    except Exception:
-        logger.exception("Background material processing failed for module %s", module_id)
-    finally:
-        db.close()
-        with _MATERIAL_PROCESSING_LOCK:
-            _MATERIAL_PROCESSING_JOBS.discard(module_id)
+        backend_root = Path(__file__).resolve().parents[1]
+        try:
+            _MATERIAL_PROCESSING_JOBS[module_id] = subprocess.Popen(
+                [sys.executable, "-m", "services.teacher_material_worker", str(module_id)],
+                cwd=backend_root,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except OSError:
+            logger.exception("Could not start background material processing for module %s", module_id)
 
 
 def _resolve_material_path(path: Path) -> Path | None:
