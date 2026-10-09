@@ -1,6 +1,6 @@
 from typing import List, Optional, Tuple
 from sqlalchemy.orm import Session
-from sqlalchemy import desc
+from sqlalchemy import desc, or_
 from models.audit_log import AuditLog
 from utils.enum import AuditActionEnum, RoleEnum
 from datetime import datetime
@@ -38,7 +38,11 @@ class AuditLogRepository:
         if date_to:
             q = q.filter(AuditLog.created_at <= date_to)
         if search:
-            q = q.filter(AuditLog.affected_record.ilike(f"%{search}%"))
+            search_pattern = f"%{search}%"
+            q = q.filter(or_(
+                AuditLog.affected_record.ilike(search_pattern),
+                AuditLog.ip_address.ilike(search_pattern),
+            ))
 
         total = q.count()
         items = (
