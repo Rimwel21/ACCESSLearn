@@ -514,7 +514,9 @@ def _render_presentation_slide_topics(path: Path, module_title: str, module_desc
         try:
             environment = os.environ.copy()
             environment.update({
-                "SAL_USE_VCLPLUGIN": "gen",
+                # `gen` needs an X11 display on Linux. `svp` is LibreOffice's
+                # headless backend while Windows keeps the existing launcher behavior.
+                "SAL_USE_VCLPLUGIN": "gen" if os.name == "nt" else "svp",
                 "SAL_DISABLE_OPENCL": "1",
                 "OOO_DISABLE_RECOVERY": "1",
             })

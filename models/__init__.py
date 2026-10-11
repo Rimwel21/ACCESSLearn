@@ -6,6 +6,7 @@ from models.file_upload import FileUpload
 from models.grade_levels import GradeLevels
 from models.HI_sections import HI_SECTIONS
 from models.learning_topic import LearningTopic
+from models.notification import Notification
 from models.student_profile import StudentProfile
 from models.student_progress import StudentTopicProgress
 from models.student_quiz_progress import StudentQuizProgress
