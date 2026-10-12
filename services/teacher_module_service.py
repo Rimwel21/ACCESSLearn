@@ -393,6 +393,12 @@ def _process_material_topics(
         db.commit()
 
     if not render_presentation and _requires_background_material_processing(source_path):
+        if _is_pptx_path(source_path):
+            # A presentation is displayed as complete rendered slide images. Do not
+            # expose the module description as a temporary first topic while its
+            # background render is still running.
+            _replace_topic_records(db, module, [])
+            return True
         _replace_generated_topics(
             db,
             module,
