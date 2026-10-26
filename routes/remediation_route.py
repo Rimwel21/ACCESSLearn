@@ -10,7 +10,6 @@ from services.remediation_service import (
     list_student_remediation_activities,
     list_teacher_remediation_activities,
     submit_student_remediation_target,
-    upload_intervention_video,
     upload_remediation_question_video,
 )
 from utils.dependencies import get_current_user, get_db
@@ -35,19 +34,6 @@ def create_teacher_remediation_route(
     current_user: Accounts = Depends(get_current_user),
 ):
     return create_remediation_activity(payload, db, current_user)
-
-
-@teacher_router.post("/{activity_id}/interventions/{intervention_id}/video", response_model=RemediationActivityOut)
-@limiter.limit("10/minute")
-async def upload_remediation_video_route(
-    request: Request,
-    activity_id: int,
-    intervention_id: int,
-    video: UploadFile = File(...),
-    db: Session = Depends(get_db),
-    current_user: Accounts = Depends(get_current_user),
-):
-    return upload_intervention_video(activity_id, intervention_id, video, db, current_user)
 
 
 @teacher_router.post("/{activity_id}/interventions/{intervention_id}/questions/{question_index}/video", response_model=RemediationActivityOut)

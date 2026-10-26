@@ -55,7 +55,6 @@ class RemediationInterventionOut(BaseModel):
     title: str
     instructions: str | None = None
     questions: list[RemediationQuestion]
-    video_url: str | None = None
     targets: list[RemediationTargetOut] = []
 
 

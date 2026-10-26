@@ -22,7 +22,6 @@ from utils.handsign.science_vocabulary import answers_match
 from utils.utc_now import utc_now
 
 
-VIDEO_DIR = Path("static/remediation_videos")
 QUESTION_VIDEO_DIR = Path("static/remediation_question_videos")
 ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".webm", ".mov", ".avi"}
 MAX_VIDEO_BYTES = 100 * 1024 * 1024
@@ -87,21 +86,6 @@ def list_teacher_remediation_activities(db: Session, current_user) -> list[dict]
         .all()
     )
     return [_teacher_activity_dict(activity, db) for activity in activities]
-
-
-def upload_intervention_video(activity_id: int, intervention_id: int, video: UploadFile, db: Session, current_user) -> dict:
-    activity = _teacher_activity(activity_id, db, current_user)
-    intervention = next((item for item in activity.interventions if item.id == intervention_id), None)
-    if not intervention:
-        raise HTTPException(status_code=404, detail="Remediation topic group not found")
-    destination = _save_video(video, VIDEO_DIR, "Explanation videos")
-
-    old_path = _video_path(intervention.video_url)
-    intervention.video_url = f"/static/remediation_videos/{destination.name}"
-    db.commit()
-    if old_path:
-        old_path.unlink(missing_ok=True)
-    return _teacher_activity_dict(_teacher_activity(activity.id, db, current_user), db)
 
 
 def upload_remediation_question_video(
@@ -261,7 +245,6 @@ def _teacher_activity_dict(activity: RemediationActivity, db: Session) -> dict:
                 "title": item.title,
                 "instructions": item.instructions,
                 "questions": item.questions or [],
-                "video_url": item.video_url,
                 "targets": [
                     {
                         "id": target.id,
@@ -302,7 +285,6 @@ def _student_target_dict(target: RemediationTarget, db: Session, *, include_topi
         "start_sort_order": intervention.start_sort_order,
         "end_sort_order": intervention.end_sort_order,
         "questions": questions,
-        "video_url": intervention.video_url,
         "status": target.status,
         "score": target.score,
         "total": target.total,
@@ -433,12 +415,6 @@ def _notify_targets(activity: RemediationActivity, target_ids: set[int], db: Ses
         )
     except Exception:
         pass
-
-
-def _video_path(url: str | None) -> Path | None:
-    if not url or not url.startswith("/static/remediation_videos/"):
-        return None
-    return VIDEO_DIR / Path(url).name
 
 
 def _question_video_path(url: str | None) -> Path | None:
