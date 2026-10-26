@@ -210,6 +210,7 @@ def get_teacher_module(request: Request, module_id: int, db: Session, current_us
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Module not found")
 
     if _needs_material_topic_regeneration(module):
+        _ensure_presentation_fallback_topics(db, module)
         _queue_material_topic_regeneration(module.id)
     elif not module.topics:
         _replace_generated_topics(db, module, _build_fallback_text(module.title, module.description, module.file_name), [])
@@ -394,10 +395,14 @@ def _process_material_topics(
 
     if not render_presentation and _requires_background_material_processing(source_path):
         if _is_pptx_path(source_path):
-            # A presentation is displayed as complete rendered slide images. Do not
-            # expose the module description as a temporary first topic while its
-            # background render is still running.
-            _replace_topic_records(db, module, [])
+            # Build a usable structured-slide preview immediately. LibreOffice can
+            # later replace it with full slide images in the background, but a
+            # teacher or student must never be left with only an empty placeholder.
+            topics = _extract_pptx_slide_topics(source_path, module.title, module.description)
+            if topics:
+                _replace_topic_records(db, module, topics)
+            else:
+                _replace_generated_topics(db, module, _build_fallback_text(module.title, module.description, module.file_name), [])
             return True
         _replace_generated_topics(
             db,
@@ -413,14 +418,13 @@ def _process_material_topics(
 
     if _is_pptx_path(source_path) and render_presentation:
         rendered_topics = _render_presentation_slide_topics(source_path, module.title, module.description)
-        if rendered_topics is not None:
-            if not rendered_topics:
-                return False
+        if rendered_topics:
             _replace_topic_records(db, module, rendered_topics)
             return True
 
-        # LibreOffice is unavailable. Retain the established text-only fallback
-        # for installations that do not support rendered presentation slides.
+        # A LibreOffice render can fail for one presentation even when LibreOffice
+        # itself is installed. Do not leave the material with zero topics: fall
+        # back to the structured PPTX reader used by the learning viewer.
         topics = _extract_pptx_slide_topics(source_path, module.title, module.description)
         if topics:
             _replace_topic_records(db, module, topics)
@@ -458,6 +462,33 @@ def _queue_material_topic_regeneration(module_id: int) -> None:
             )
         except OSError:
             logger.exception("Could not start background material processing for module %s", module_id)
+
+
+def _ensure_presentation_fallback_topics(db: Session, module: TeacherModule) -> bool:
+    """Give existing PPT uploads a usable preview before full-image rendering finishes."""
+    if not module.file_path or not _is_pptx_path(Path(module.file_path)) or _has_presentation_topics(module):
+        return False
+    source_path = _resolve_material_path(Path(module.file_path))
+    if source_path is None:
+        return False
+    topics = _extract_pptx_slide_topics(source_path, module.title, module.description)
+    if not topics:
+        return False
+    _replace_topic_records(db, module, topics)
+    db.refresh(module)
+    return True
+
+
+def _has_presentation_topics(module: TeacherModule) -> bool:
+    for topic in module.topics:
+        if any(url.startswith("/static/presentation_slides/") for url in (topic.page_image_urls or [])):
+            return True
+        try:
+            if json.loads(topic.content or "").get("type") == "pptx_slide":
+                return True
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+    return False
 
 
 def _resolve_material_path(path: Path) -> Path | None:
@@ -520,12 +551,13 @@ def _render_presentation_slide_topics(path: Path, module_title: str, module_desc
         try:
             environment = os.environ.copy()
             environment.update({
-                # `gen` needs an X11 display on Linux. `svp` is LibreOffice's
-                # headless backend while Windows keeps the existing launcher behavior.
-                "SAL_USE_VCLPLUGIN": "gen" if os.name == "nt" else "svp",
                 "SAL_DISABLE_OPENCL": "1",
                 "OOO_DISABLE_RECOVERY": "1",
             })
+            # Let LibreOffice choose its native Windows backend. For non-Windows
+            # headless servers, `svp` avoids requiring a graphical display.
+            if os.name != "nt":
+                environment["SAL_USE_VCLPLUGIN"] = "svp"
             result = subprocess.run(
                 command,
                 capture_output=True,

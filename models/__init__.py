@@ -6,6 +6,7 @@ from models.file_upload import FileUpload
 from models.grade_levels import GradeLevels
 from models.HI_sections import HI_SECTIONS
 from models.learning_topic import LearningTopic
+from models.topic_sign_video import TopicSignVideo
 from models.notification import Notification
 from models.student_profile import StudentProfile
 from models.student_progress import StudentTopicProgress
@@ -22,3 +23,9 @@ from models.handsign_tutorial_practice import HandsignTutorialPractice
 from models.handsign_dataset_label import HandsignDatasetLabel
 from models.handsign_dataset_week import HandsignDatasetWeek
 from models.teacher_activity_week import TeacherActivityWeek
+from models.module_checkpoint import ModuleCheckpoint
+from models.student_checkpoint_attempt import StudentCheckpointAttempt
+from models.student_module_learning_summary import StudentModuleLearningSummary
+from models.remediation_activity import RemediationActivity
+from models.remediation_intervention import RemediationIntervention
+from models.remediation_target import RemediationTarget

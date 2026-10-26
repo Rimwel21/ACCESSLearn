@@ -5,6 +5,8 @@ from sqlalchemy.orm import Session, joinedload
 from models.accounts import Accounts
 from models.assessment_retake_request import AssessmentRetakeRequest
 from models.learning_topic import LearningTopic
+from models.module_checkpoint import ModuleCheckpoint
+from models.student_checkpoint_attempt import StudentCheckpointAttempt
 from models.student_quiz_progress import StudentQuizProgress
 from models.student_progress import StudentTopicProgress
 from models.student_profile import StudentProfile
@@ -12,9 +14,11 @@ from models.teacher_assessment import TeacherAssessment
 from models.teacher_class import TeacherClass
 from models.teacher_module import TeacherModule
 from services.teacher_module_service import (
+    _ensure_presentation_fallback_topics,
     _needs_material_topic_regeneration,
     _queue_material_topic_regeneration,
 )
+from services.module_checkpoint_service import student_module_checkpoints
 from utils.enum import RoleEnum
 from utils.handsign.science_vocabulary import answers_match
 from utils.utc_now import utc_now
@@ -257,6 +261,7 @@ def get_student_module(request: Request, module_id: int, db: Session, current_us
         "created_at": module.created_at,
         "updated_at": module.updated_at,
         "topics": module.topics,
+        "checkpoints": student_module_checkpoints(module, db, current_user),
         "assessments": [_assessment_to_dict(assessment, db, current_user) for assessment in _module_assessments(module, db)],
     }
 
@@ -272,6 +277,11 @@ def get_module_progress(request: Request, module_id: int, db: Session, current_u
         .all()
     ]
     quiz_ids = _quiz_ids_for_module(module_id, db)
+    checkpoint_ids = [
+        row.id for row in db.query(ModuleCheckpoint.id)
+        .filter(ModuleCheckpoint.module_id == module_id)
+        .all()
+    ]
     completed_ids = [
         row.topic_id for row in db.query(StudentTopicProgress.topic_id)
         .filter(
@@ -290,21 +300,35 @@ def get_module_progress(request: Request, module_id: int, db: Session, current_u
         )
         .all()
     ]
+    completed_checkpoint_ids = [
+        row.checkpoint_id for row in db.query(StudentCheckpointAttempt.checkpoint_id)
+        .filter(
+            StudentCheckpointAttempt.student_id == current_user.id,
+            StudentCheckpointAttempt.checkpoint_id.in_(checkpoint_ids) if checkpoint_ids else False,
+        )
+        .all()
+    ] if checkpoint_ids else []
     current_completed_topic_ids = sorted(set(completed_ids) & set(topic_ids))
     current_completed_quiz_ids = sorted(set(completed_quiz_ids) & set(quiz_ids))
+    current_completed_checkpoint_ids = sorted(set(completed_checkpoint_ids) & set(checkpoint_ids))
     completed = len(current_completed_topic_ids)
     total = len(topic_ids)
     completed_quizzes = len(current_completed_quiz_ids)
     total_quizzes = len(quiz_ids)
-    total_items = total + total_quizzes
-    completed_items = completed + completed_quizzes
+    completed_checkpoints = len(current_completed_checkpoint_ids)
+    total_checkpoints = len(checkpoint_ids)
+    total_items = total + total_quizzes + total_checkpoints
+    completed_items = completed + completed_quizzes + completed_checkpoints
     return {
         "completed_topic_ids": current_completed_topic_ids,
         "completed_quiz_ids": current_completed_quiz_ids,
+        "completed_checkpoint_ids": current_completed_checkpoint_ids,
         "total_topics": total,
         "completed_topics": completed,
         "total_quizzes": total_quizzes,
         "completed_quizzes": completed_quizzes,
+        "total_checkpoints": total_checkpoints,
+        "completed_checkpoints": completed_checkpoints,
         "percent": round((completed_items / total_items) * 100) if total_items else 0,
     }
 
@@ -601,6 +625,18 @@ def _ensure_quiz_unlocked(module_id: int, db: Session, current_user: Accounts):
     ).count()
     if topic_count and completed_topic_count < topic_count:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Complete all topics before taking the quiz")
+    checkpoint_count = db.query(ModuleCheckpoint.id).filter(ModuleCheckpoint.module_id == module_id).count()
+    completed_checkpoint_count = (
+        db.query(StudentCheckpointAttempt.id)
+        .join(ModuleCheckpoint)
+        .filter(
+            StudentCheckpointAttempt.student_id == current_user.id,
+            ModuleCheckpoint.module_id == module_id,
+        )
+        .count()
+    )
+    if checkpoint_count and completed_checkpoint_count < checkpoint_count:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Complete all learning checkpoints before taking the quiz")
 
 
 def _get_or_create_assessment_progress(student_id: int, module_id: int | None, assessment_id: int, db: Session):
@@ -866,6 +902,7 @@ def _module_to_student_dict(module: TeacherModule, db: Session, current_user: Ac
         "created_at": module.created_at,
         "updated_at": module.updated_at,
         "topics": module.topics,
+        "checkpoints": student_module_checkpoints(module, db, current_user),
         "assessments": [_assessment_to_dict(assessment, db, current_user) for assessment in _module_assessments(module, db)],
     }
 
@@ -897,6 +934,24 @@ def _ensure_topic_unlocked(module_id: int, topic_id: int, db: Session, current_u
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Complete the previous topic before opening this topic",
         )
+
+    topic = db.query(LearningTopic).filter(LearningTopic.id == topic_id).first()
+    if not topic:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Topic not found")
+    checkpoint = db.query(ModuleCheckpoint).filter(
+        ModuleCheckpoint.module_id == module_id,
+        ModuleCheckpoint.end_sort_order == topic.sort_order - 1,
+    ).first()
+    if checkpoint:
+        completed_checkpoint = db.query(StudentCheckpointAttempt.id).filter(
+            StudentCheckpointAttempt.student_id == current_user.id,
+            StudentCheckpointAttempt.checkpoint_id == checkpoint.id,
+        ).first()
+        if not completed_checkpoint:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Submit the 5-question checkpoint before opening the next 10 topics",
+            )
 
 
 def _is_module_complete(request: Request, module_id: int, db: Session, current_user: Accounts):
@@ -962,6 +1017,8 @@ def _ensure_topics(db: Session, modules: list[TeacherModule]):
     changed = False
     for module in modules:
         if _needs_material_topic_regeneration(module):
+            if _ensure_presentation_fallback_topics(db, module):
+                changed = True
             # File conversion can be expensive. Let the student keep using the
             # page while a single background job prepares rendered content.
             _queue_material_topic_regeneration(module.id)

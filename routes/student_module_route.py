@@ -5,6 +5,7 @@ from limiter import limiter
 from models.accounts import Accounts
 from schemas.teacher_module_schema import StudentDeadlineOut, StudentProgressOut, TeacherModuleDetailOut
 from schemas.teacher_assessment_schema import TeacherAssessmentOut
+from services.module_checkpoint_service import submit_checkpoint
 from services.student_module_service import (
     get_student_activity,
     get_module_progress,
@@ -136,6 +137,19 @@ def update_topic_progress_route(
         db=db,
         current_user=current_user,
     )
+
+
+@router.post("/{module_id}/checkpoints/{checkpoint_id}/submit")
+@limiter.limit("20/minute")
+def submit_checkpoint_route(
+    request: Request,
+    module_id: int,
+    checkpoint_id: int,
+    payload: QuizSubmit,
+    db: Session = Depends(get_db),
+    current_user: Accounts = Depends(get_current_user),
+):
+    return submit_checkpoint(request, module_id, checkpoint_id, payload.answers, db, current_user)
 
 
 @router.post("/{module_id}/quizzes/{quiz_id}/submit")

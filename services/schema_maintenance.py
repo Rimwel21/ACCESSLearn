@@ -13,6 +13,13 @@ from models.handsign_tutorial_practice import HandsignTutorialPractice
 from models.handsign_dataset_label import HandsignDatasetLabel
 from models.handsign_dataset_week import HandsignDatasetWeek
 from models.teacher_activity_week import TeacherActivityWeek
+from models.module_checkpoint import ModuleCheckpoint
+from models.student_checkpoint_attempt import StudentCheckpointAttempt
+from models.student_module_learning_summary import StudentModuleLearningSummary
+from models.remediation_activity import RemediationActivity
+from models.remediation_intervention import RemediationIntervention
+from models.remediation_target import RemediationTarget
+from models.topic_sign_video import TopicSignVideo
 from models.notification import Notification
 from models.push_notification import DeadlineNotificationLog, PushSubscription
 from models.school_year import SchoolYear
@@ -58,6 +65,8 @@ def ensure_academic_tables() -> None:
     _ensure_handsign_dataset_label_schema()
     _ensure_handsign_dataset_week_schema()
     _ensure_teacher_activity_week_schema()
+    _ensure_checkpoint_and_remediation_schema()
+    _ensure_topic_sign_video_schema()
     _ensure_notification_schema()
     _ensure_teacher_invitation_schema()
     _ensure_push_notification_schema()
@@ -220,6 +229,24 @@ def _ensure_handsign_dataset_week_schema() -> None:
 def _ensure_teacher_activity_week_schema() -> None:
     if not inspect(engine).has_table(TeacherActivityWeek.__tablename__):
         TeacherActivityWeek.__table__.create(bind=engine, checkfirst=True)
+
+
+def _ensure_checkpoint_and_remediation_schema() -> None:
+    """Create the additive learning-checkpoint and targeted-support tables."""
+    for table in (
+        ModuleCheckpoint.__table__,
+        StudentCheckpointAttempt.__table__,
+        StudentModuleLearningSummary.__table__,
+        RemediationActivity.__table__,
+        RemediationIntervention.__table__,
+        RemediationTarget.__table__,
+    ):
+        table.create(bind=engine, checkfirst=True)
+
+
+def _ensure_topic_sign_video_schema() -> None:
+    """Create topic-level sign-language support storage for existing databases."""
+    TopicSignVideo.__table__.create(bind=engine, checkfirst=True)
 
 
 def _seed_default_academic_options() -> None:
