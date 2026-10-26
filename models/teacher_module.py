@@ -27,6 +27,7 @@ class TeacherModule(Base):
     teacher_account = relationship("Accounts", back_populates="teacher_modules")
     teacher_class = relationship("TeacherClass", back_populates="modules")
     topics = relationship("LearningTopic", back_populates="module", cascade="all, delete-orphan", passive_deletes=True)
+    checkpoints = relationship("ModuleCheckpoint", back_populates="module", cascade="all, delete-orphan", passive_deletes=True)
     assessments = relationship("TeacherAssessment", back_populates="module", passive_deletes=True)
 
     created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)

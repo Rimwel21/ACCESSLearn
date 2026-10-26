@@ -24,6 +24,8 @@ from routes.student_module_route import router as student_modules
 from routes.handsign_route import router as handsign_router
 from routes.admin_create_section_route import router as section_create
 from routes.push_notification_route import router as push_notifications
+from routes.remediation_route import student_router as student_remediation_router
+from routes.remediation_route import teacher_router as teacher_remediation_router
 from routes.admin_route import router as admin_router
 from core.handsign_config import get_handsign_settings
 from services.handsign.prediction_service import PredictionService
@@ -131,6 +133,8 @@ app.include_router(admin_router)
 app.include_router(admin_approval)
 app.include_router(section_create)
 app.include_router(push_notifications)
+app.include_router(teacher_remediation_router)
+app.include_router(student_remediation_router)
 
 
 @app.on_event("startup")

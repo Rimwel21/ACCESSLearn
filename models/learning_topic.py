@@ -18,6 +18,7 @@ class LearningTopic(Base):
     sort_order = Column(Integer, default=1, nullable=False)
 
     module = relationship("TeacherModule", back_populates="topics")
+    sign_videos = relationship("TopicSignVideo", back_populates="learning_topic", cascade="all, delete-orphan", passive_deletes=True)
     progress_records = relationship("StudentTopicProgress", back_populates="topic", cascade="all, delete-orphan", passive_deletes=True)
 
     created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
