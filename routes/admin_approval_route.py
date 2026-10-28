@@ -2,10 +2,11 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from models.accounts import Accounts
 from schemas.accounts_schema import PendingTeacherResponse
+from utils.admin_guard import require_admin
 from utils.dependencies import get_current_user, get_db
 from services.admin_approval_service import admin_approval, admin_block, teachers_pending_account
 
-router = APIRouter(prefix="/admin", tags=["Admin"])
+router = APIRouter(prefix="/admin", tags=["Admin"], dependencies=[Depends(require_admin)])
 
 @router.patch("/teachers/{teacher_id}/approve")
 def admin_approval_routes(teacher_id: int, current_user: Accounts = Depends(get_current_user), db: Session = Depends(get_db)):

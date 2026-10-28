@@ -12,10 +12,15 @@ from schemas.teacher_class_schema import TeacherClassOut
 from services.academic_service import ALLOWED_GRADE_NAMES, get_grade_level_or_404
 from utils.dependencies import get_current_user, get_db
 from utils.enum import AccountStatusEnum, RoleEnum
+from utils.teacher_guard import require_teacher
 from utils.utc_now import utc_now
 
 
-router = APIRouter(prefix="/teacher/sections", tags=["Teacher Sections"])
+router = APIRouter(
+    prefix="/teacher/sections",
+    tags=["Teacher Sections"],
+    dependencies=[Depends(require_teacher)],
+)
 
 
 def _ensure_teacher(current_user: Accounts):

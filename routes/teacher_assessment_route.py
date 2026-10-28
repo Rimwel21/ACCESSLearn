@@ -16,9 +16,14 @@ from services.teacher_assessment_service import (
     update_teacher_assessment,
 )
 from utils.dependencies import get_current_user, get_db
+from utils.teacher_guard import require_teacher
 
 
-router = APIRouter(prefix="/teacher/assessments", tags=["Teacher Assessments"])
+router = APIRouter(
+    prefix="/teacher/assessments",
+    tags=["Teacher Assessments"],
+    dependencies=[Depends(require_teacher)],
+)
 
 
 class RetakeReviewBody(BaseModel):

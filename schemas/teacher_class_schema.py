@@ -86,6 +86,20 @@ class DashboardStudentProgressOut(BaseModel):
     learning_materials_completed: int = 0
     learning_materials_in_progress: int = 0
     learning_materials_total: int = 0
+    quizzes_completed: int = 0
+    quizzes_total: int = 0
+    quiz_average_percent: int = 0
+    completed_tasks: int = 0
+    incomplete_tasks: int = 0
+    total_tasks: int = 0
+    handsign_practice_count: int = 0
+    handsign_best_score: float | None = None
+    latest_assessment_title: str | None = None
+    latest_assessment_type: str | None = None
+    latest_assessment_status: str | None = None
+    latest_assessment_score: int | None = None
+    latest_assessment_total: int | None = None
+    latest_assessment_completed_at: datetime | None = None
     status: str
     last_activity: datetime | None = None
     quiz_activity: str | None = None
@@ -116,6 +130,9 @@ class TeacherStudentRecordAssessmentOut(BaseModel):
     answers: dict = Field(default_factory=dict)
     completed_at: datetime | None = None
     submission_type: str | None = None
+    retake_status: str | None = None
+    attempt_count: int = 0
+    attempt_history: list[dict] = Field(default_factory=list)
 
 
 class TeacherStudentRecordHandsignOut(BaseModel):
@@ -138,6 +155,20 @@ class TeacherStudentRecordOut(BaseModel):
     learning_materials_completed: int = 0
     learning_materials_in_progress: int = 0
     learning_materials_total: int = 0
+    quizzes_completed: int = 0
+    quizzes_total: int = 0
+    quiz_average_percent: int = 0
+    completed_tasks: int = 0
+    incomplete_tasks: int = 0
+    total_tasks: int = 0
+    handsign_practice_count: int = 0
+    handsign_best_score: float | None = None
+    latest_assessment_title: str | None = None
+    latest_assessment_type: str | None = None
+    latest_assessment_status: str | None = None
+    latest_assessment_score: int | None = None
+    latest_assessment_total: int | None = None
+    latest_assessment_completed_at: datetime | None = None
     activities_completed: int
     activities_total: int
     status: str

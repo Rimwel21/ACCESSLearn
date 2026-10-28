@@ -7,9 +7,29 @@ from models.student_profile import StudentProfile
 from models.teacher_profile import TeacherProfile
 from auth.account_auth import hash_password, verify_password, create_access_token, create_refresh_token
 from services.academic_service import get_grade_level_or_404, get_section_for_grade_or_400
+from services.audit_service import write_log
+from core.config import settings
+from utils.enum import AuditActionEnum
 
 from models.email_otp import EmailOTP
 from utils.utc_now import utc_now
+
+
+def _record_login_failure(request: Request, db: Session, account: Accounts | None, reason: str) -> None:
+    try:
+        write_log(
+            db,
+            module="Authentication",
+            action=AuditActionEnum.login_failed,
+            actor_id=account.id if account else None,
+            actor_role=account.role if account else None,
+            affected_record=f"Account #{account.id}" if account else "Unknown account",
+            reason=reason,
+            request=request,
+            status="failed",
+        )
+    except Exception:
+        db.rollback()
 
 def user_registration(request: Request, user: AccountRegister, db: Session):
     if user.role == RoleEnum.student:
@@ -146,6 +166,7 @@ def user_login(request: Request, user: AccountLogin, response: Response, db: Ses
         if not db_account and user.role:
             other_account = db.query(Accounts).filter(Accounts.email == user.email).first()
             if other_account:
+                _record_login_failure(request, db, other_account, "Login attempted through the wrong role portal")
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail=f"This email belongs to a {other_account.role.value} account. Please use the {other_account.role.value} login.",
@@ -157,18 +178,31 @@ def user_login(request: Request, user: AccountLogin, response: Response, db: Ses
         db_account = query.first()
 
     if not db_account:
+        _record_login_failure(request, db, None, "Invalid credentials for an unknown account")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
     
     if db_account.verification_status == VerificationStatus.pending:
+        _record_login_failure(request, db, db_account, "Pending account attempted to log in")
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Wait for admin approval")
 
     if db_account.role == RoleEnum.teacher and db_account.account_status == AccountStatusEnum.pending_activation:
+        _record_login_failure(request, db, db_account, "Pending teacher attempted to log in")
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Wait for admin approval")
     
     if db_account.verification_status == VerificationStatus.blocked:
+        _record_login_failure(request, db, db_account, "Blocked account attempted to log in")
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You've been blocked from the system")
 
+    if db_account.account_status in {
+        AccountStatusEnum.inactive,
+        AccountStatusEnum.archived,
+        AccountStatusEnum.suspended,
+    }:
+        _record_login_failure(request, db, db_account, "Disabled account attempted to log in")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account is not active")
+
     if not verify_password(user.password, db_account.hashed_password):
+        _record_login_failure(request, db, db_account, "Incorrect password")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
     
     access_token = create_access_token(
@@ -190,9 +224,9 @@ def user_login(request: Request, user: AccountLogin, response: Response, db: Ses
         key="refresh_token",
         value=refresh_token,
         httponly=True,
-        secure=False,  # True kapag HTTPS na
-        samesite="lax",
-        max_age=7 * 24 * 60 * 60,
+        secure=settings.use_secure_cookies,
+        samesite=settings.refresh_cookie_samesite,
+        max_age=settings.refresh_expire_days * 24 * 60 * 60,
         path="/api/refresh"
     )
     user_display_name = db_account.username or db_account.email or f"User #{db_account.id}"
@@ -214,8 +248,6 @@ def user_login(request: Request, user: AccountLogin, response: Response, db: Ses
 
     # Write audit log for login
     try:
-        from services.audit_service import write_log
-        from utils.enum import AuditActionEnum
         write_log(
             db,
             module="Authentication",

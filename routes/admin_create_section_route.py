@@ -13,8 +13,9 @@ from services.admin_create_section_service import (
 )
 from schemas.create_section_schema import SectionCreate, SectionOut, SectionUpdate
 from utils.dependencies import get_db, get_current_user
+from utils.admin_guard import require_admin
 
-router = APIRouter(prefix="/section", tags=["Section"])
+router = APIRouter(prefix="/section", tags=["Section"], dependencies=[Depends(require_admin)])
 
 
 @router.post("/create/admin", response_model=SectionOut)

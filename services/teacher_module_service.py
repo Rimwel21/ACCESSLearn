@@ -44,6 +44,13 @@ ALLOWED_MATERIAL_TYPES = {
     "application/vnd.ms-powerpoint",
     "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 }
+FILE_SIGNATURES = {
+    ".pdf": (b"%PDF-",),
+    ".doc": (b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",),
+    ".ppt": (b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",),
+    ".docx": (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08"),
+    ".pptx": (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08"),
+}
 UPLOAD_DIR = Path("uploads/learning_materials")
 MATERIAL_IMAGE_DIR = Path("static/material_images")
 PDF_PAGE_DIR = Path("static/pdf_pages")
@@ -328,14 +335,47 @@ def _validate_material_file(material_file: UploadFile, expected_content_type: st
     if extension not in ALLOWED_MATERIAL_EXTENSIONS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Unsupported file type. Upload PDF or Word files only."
+            detail="Unsupported file type. Upload PDF, Word, or PowerPoint files only."
         )
 
     if material_file.content_type and material_file.content_type not in ALLOWED_MATERIAL_TYPES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Unsupported file type. Upload PDF or Word files only."
+            detail="Unsupported file type. Upload PDF, Word, or PowerPoint files only."
         )
+
+    file_size = _upload_file_size(material_file)
+    maximum_size = settings.max_material_upload_mb * 1024 * 1024
+    if file_size <= 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded file is empty")
+    if file_size > maximum_size:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail=f"File exceeds the {settings.max_material_upload_mb} MB upload limit",
+        )
+
+    prefix = _read_upload_prefix(material_file, 8)
+    if not any(prefix.startswith(signature) for signature in FILE_SIGNATURES[extension]):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File content does not match its extension",
+        )
+
+
+def _upload_file_size(material_file: UploadFile) -> int:
+    current_position = material_file.file.tell()
+    material_file.file.seek(0, os.SEEK_END)
+    file_size = material_file.file.tell()
+    material_file.file.seek(current_position)
+    return file_size
+
+
+def _read_upload_prefix(material_file: UploadFile, length: int) -> bytes:
+    current_position = material_file.file.tell()
+    material_file.file.seek(0)
+    prefix = material_file.file.read(length)
+    material_file.file.seek(current_position)
+    return prefix
 
 
 def _validate_existing_material_type(module: TeacherModule, expected_content_type: str | None):

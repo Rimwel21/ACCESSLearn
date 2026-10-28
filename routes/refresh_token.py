@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, status, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from jose import jwt, JWTError, ExpiredSignatureError
 from sqlalchemy.orm import Session
 from utils.dependencies import get_db
@@ -8,7 +8,7 @@ from models.teacher_profile import TeacherProfile
 from schemas.accounts_schema import TokenResponse
 from auth.account_auth import create_access_token
 from core.config import settings
-from utils.enum import RoleEnum
+from utils.enum import AccountStatusEnum, RoleEnum, VerificationStatus
 
 router = APIRouter(prefix="/api", tags=["RefreshToken"])
 
@@ -38,6 +38,12 @@ def refresh_token(request: Request, db: Session = Depends(get_db)):
         if not user:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid user")
 
+        if (
+            user.verification_status != VerificationStatus.verified
+            or user.account_status not in {AccountStatusEnum.active, AccountStatusEnum.waiting_assignment}
+        ):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account is not active")
+
         new_access_token = create_access_token(
             data={
                 "sub": str(user_id),
@@ -63,4 +69,16 @@ def refresh_token(request: Request, db: Session = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired")
     except JWTError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+def logout(response: Response):
+    response.delete_cookie(
+        key="refresh_token",
+        path="/api/refresh",
+        secure=settings.use_secure_cookies,
+        httponly=True,
+        samesite=settings.refresh_cookie_samesite,
+    )
+    return None
     

@@ -1,5 +1,5 @@
 from fastapi import HTTPException, Request, status
-from sqlalchemy import func, or_
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 from models.accounts import Accounts
@@ -16,6 +16,7 @@ from models.grade_levels import GradeLevels
 from models.HI_sections import HI_SECTIONS
 from schemas.teacher_class_schema import TeacherClassCreate
 from services.academic_service import ALLOWED_GRADE_NAMES, get_grade_level_or_404, get_section_for_grade_or_400
+from services.student_module_service import _visible_topics
 from utils.enum import RoleEnum
 from utils.utc_now import utc_now
 
@@ -318,7 +319,6 @@ def list_recent_activities(request: Request, limit: int, db: Session, current_us
 
 
 def _matching_student_query(teacher_class: TeacherClass, db: Session):
-    section_name = teacher_class.sections.name if teacher_class.sections else ""
     return (
         db.query(StudentProfile)
         .options(
@@ -326,10 +326,9 @@ def _matching_student_query(teacher_class: TeacherClass, db: Session):
             joinedload(StudentProfile.section)
         )
         .join(Accounts, Accounts.id == StudentProfile.account_id)
-        .join(HI_SECTIONS, StudentProfile.section_id == HI_SECTIONS.id)
         .filter(
             StudentProfile.grade_level_id == teacher_class.grade_level_id,
-            func.lower(func.trim(HI_SECTIONS.name)) == section_name.strip().lower(),
+            StudentProfile.section_id == teacher_class.section_id,
             Accounts.role == RoleEnum.student,
         )
         .order_by(StudentProfile.name.asc())
@@ -341,24 +340,17 @@ def _count_matching_students(teacher_class: TeacherClass, db: Session):
 
 
 def _unique_students_for_classes(classes: list[TeacherClass], db: Session):
-    filters = []
-    for teacher_class in classes:
-        section_name = teacher_class.sections.name if teacher_class.sections else ""
-        filters.append(
-            (
-                StudentProfile.grade_level_id == teacher_class.grade_level_id
-            ) & (
-                func.lower(func.trim(HI_SECTIONS.name)) == section_name.strip().lower()
-            )
-        )
-    if not filters:
+    section_ids = {teacher_class.section_id for teacher_class in classes}
+    if not section_ids:
         return []
 
     return (
         db.query(StudentProfile)
         .join(Accounts, Accounts.id == StudentProfile.account_id)
-        .join(HI_SECTIONS, StudentProfile.section_id == HI_SECTIONS.id)
-        .filter(Accounts.role == RoleEnum.student, or_(*filters))
+        .filter(
+            Accounts.role == RoleEnum.student,
+            StudentProfile.section_id.in_(section_ids),
+        )
         .order_by(StudentProfile.name.asc())
         .all()
     )
@@ -372,6 +364,7 @@ def _average_quiz_score(student_ids: list[int], class_ids: list[int], db: Sessio
         .filter(
             TeacherModule.teacher_id == current_user.id,
             TeacherModule.class_id.in_(class_ids),
+            TeacherModule.status == "Published",
         )
         .all()
     ] if class_ids else []
@@ -401,108 +394,135 @@ def _dashboard_progress_for_student(student: StudentProfile, classes: list[Teach
         if teacher_class.grade_level_id == student.grade_level_id
         and teacher_class.section_id == student.section_id
     ]
-    if not matching_class_ids:
-        total_items = 0
-        completed_items = 0
-        topic_ids = []
-        activity_ids = []
-        completed_topic_ids = set()
-        in_progress_topic_ids = set()
-        completed_activity_ids = set()
-        activity_question_total = 0
-        activity_correct_total = 0
-        last_activity = None
-        quiz_activity = None
-    else:
-        module_ids = [
-            row.id for row in db.query(TeacherModule.id)
-            .filter(
-                TeacherModule.teacher_id == current_user.id,
-                TeacherModule.class_id.in_(matching_class_ids),
-                TeacherModule.status == "Published",
-            )
-            .all()
-        ]
-        topic_ids = [
-            row.id for row in db.query(LearningTopic.id)
-            .filter(LearningTopic.module_id.in_(module_ids))
-            .all()
-        ] if module_ids else []
-        quiz_ids = [
-            row.id for row in db.query(TeacherAssessment.id)
-            .filter(
-                TeacherAssessment.teacher_id == current_user.id,
-                TeacherAssessment.module_id.in_(module_ids),
-                TeacherAssessment.assessment_type == "quiz",
-            )
-            .all()
-        ] if module_ids else []
-        activity_ids = [
-            row.id for row in db.query(TeacherAssessment.id)
-            .filter(
-                TeacherAssessment.teacher_id == current_user.id,
-                TeacherAssessment.class_id.in_(matching_class_ids),
-                TeacherAssessment.assessment_type == "activity",
-            )
-            .all()
-        ]
-
-        topic_progress = db.query(StudentTopicProgress).filter(
-            StudentTopicProgress.student_id == student.account_id,
-            StudentTopicProgress.topic_id.in_(topic_ids),
-        ).all() if topic_ids else []
-        quiz_progress = db.query(StudentQuizProgress).filter(
-            StudentQuizProgress.student_id == student.account_id,
-            StudentQuizProgress.assessment_id.in_(quiz_ids),
-        ).all() if quiz_ids else []
-        activity_progress = db.query(StudentQuizProgress).filter(
-            StudentQuizProgress.student_id == student.account_id,
-            StudentQuizProgress.assessment_id.in_(activity_ids),
-        ).all() if activity_ids else []
-
-        completed_topic_ids = {item.topic_id for item in topic_progress if item.status == "completed"}
-        in_progress_topic_ids = {item.topic_id for item in topic_progress if item.status in {"started", "in_progress"}}
-        completed_quiz_ids = {item.assessment_id for item in quiz_progress if item.status == "completed"}
-        completed_activity_ids = {item.assessment_id for item in activity_progress if item.status == "completed"}
-        activity_question_total = sum(
-            len(assessment.questions or [])
-            for assessment in db.query(TeacherAssessment)
-            .filter(
-                TeacherAssessment.id.in_(activity_ids),
-                TeacherAssessment.assessment_type == "activity",
-            )
-            .all()
-        ) if activity_ids else 0
-        activity_correct_total = sum(item.score or 0 for item in activity_progress if item.status == "completed")
-        total_items = len(topic_ids) + len(quiz_ids) + len(activity_ids)
-        completed_items = len(completed_topic_ids) + len(completed_quiz_ids) + len(completed_activity_ids)
-        activity_dates = [item.updated_at for item in topic_progress + quiz_progress + activity_progress if item.updated_at]
-        last_activity = max(activity_dates) if activity_dates else None
-        latest_quiz_progress = max(
-            (item for item in quiz_progress if item.updated_at),
-            key=lambda item: item.updated_at,
-            default=None,
+    module_ids = [
+        row.id for row in db.query(TeacherModule.id)
+        .filter(
+            TeacherModule.teacher_id == current_user.id,
+            TeacherModule.class_id.in_(matching_class_ids),
+            TeacherModule.status == "Published",
         )
-        quiz_activity = _format_quiz_activity(latest_quiz_progress, db) if latest_quiz_progress else None
+        .all()
+    ] if matching_class_ids else []
+    topic_rows = db.query(LearningTopic).filter(
+        LearningTopic.module_id.in_(module_ids)
+    ).order_by(LearningTopic.module_id, LearningTopic.sort_order, LearningTopic.id).all() if module_ids else []
+    topics_by_module: dict[int, list[LearningTopic]] = {}
+    for topic in topic_rows:
+        topics_by_module.setdefault(topic.module_id, []).append(topic)
+    topic_ids = [
+        topic.id
+        for module_topics in topics_by_module.values()
+        for topic in _visible_topics(module_topics)
+    ]
+    quizzes = db.query(TeacherAssessment).filter(
+        TeacherAssessment.teacher_id == current_user.id,
+        TeacherAssessment.module_id.in_(module_ids),
+        TeacherAssessment.assessment_type == "quiz",
+    ).all() if module_ids else []
+    activities = db.query(TeacherAssessment).filter(
+        TeacherAssessment.teacher_id == current_user.id,
+        TeacherAssessment.class_id.in_(matching_class_ids),
+        TeacherAssessment.assessment_type == "activity",
+    ).all() if matching_class_ids else []
+    quiz_ids = [assessment.id for assessment in quizzes]
+    activity_ids = [assessment.id for assessment in activities]
+    assessment_ids = quiz_ids + activity_ids
+    assessments_by_id = {assessment.id: assessment for assessment in quizzes + activities}
 
-    status_percent = round((completed_items / total_items) * 100) if total_items else 0
-    learning_material_percent = round((len(completed_topic_ids) / len(topic_ids)) * 100) if topic_ids else 0
-    activity_percent = round((activity_correct_total / activity_question_total) * 100) if activity_question_total else 0
-    status_value = _progress_status_label(status_percent)
+    topic_progress = db.query(StudentTopicProgress).filter(
+        StudentTopicProgress.student_id == student.account_id,
+        StudentTopicProgress.topic_id.in_(topic_ids),
+    ).all() if topic_ids else []
+    assessment_progress = db.query(StudentQuizProgress).filter(
+        StudentQuizProgress.student_id == student.account_id,
+        StudentQuizProgress.assessment_id.in_(assessment_ids),
+    ).all() if assessment_ids else []
+    progress_by_assessment = {item.assessment_id: item for item in assessment_progress}
+
+    completed_topic_ids = {item.topic_id for item in topic_progress if item.status == "completed"}
+    in_progress_topic_ids = {
+        item.topic_id for item in topic_progress
+        if item.status in {"started", "in_progress"}
+    }
+    completed_quiz_progress = [
+        progress_by_assessment[item_id] for item_id in quiz_ids
+        if item_id in progress_by_assessment and progress_by_assessment[item_id].status == "completed"
+    ]
+    completed_activity_progress = [
+        progress_by_assessment[item_id] for item_id in activity_ids
+        if item_id in progress_by_assessment and progress_by_assessment[item_id].status == "completed"
+    ]
+    completed_assessment_count = len(completed_quiz_progress) + len(completed_activity_progress)
+    total_items = len(topic_ids) + len(assessment_ids)
+    completed_items = len(completed_topic_ids) + completed_assessment_count
+    overall_percent = round((completed_items / total_items) * 100) if total_items else 0
+    activity_percent = _score_percent(completed_activity_progress)
+    quiz_average_percent = _score_percent(completed_quiz_progress)
+
+    latest_assessment_progress = max(
+        assessment_progress,
+        key=lambda item: item.completed_at or item.updated_at or item.started_at or utc_now(),
+        default=None,
+    )
+    latest_assessment = assessments_by_id.get(latest_assessment_progress.assessment_id) if latest_assessment_progress else None
+    latest_quiz_progress = max(
+        (item for item in assessment_progress if item.assessment_id in quiz_ids),
+        key=lambda item: item.completed_at or item.updated_at or item.started_at or utc_now(),
+        default=None,
+    )
+    quiz_activity = _format_quiz_activity(latest_quiz_progress, db) if latest_quiz_progress else None
+
+    handsign_progress = db.query(HandsignTutorialPractice).filter(
+        HandsignTutorialPractice.student_id == student.account_id,
+        HandsignTutorialPractice.activity_id.in_(activity_ids),
+    ).all() if activity_ids else []
+    activity_dates = [
+        value for value in [
+            *(item.updated_at for item in topic_progress),
+            *(item.updated_at for item in assessment_progress),
+            *(item.updated_at for item in handsign_progress),
+        ] if value
+    ]
+    last_activity = max(activity_dates) if activity_dates else None
+    status_value = "No Tasks" if not total_items else (
+        "Not Started" if not completed_items and not in_progress_topic_ids and not assessment_progress
+        else _progress_status_label(overall_percent)
+    )
     return {
         "student_id": student.account_id,
         "student_name": student.name,
-        "overall_percent": learning_material_percent,
-        "activities_completed": activity_correct_total,
-        "activities_total": activity_question_total,
+        "overall_percent": overall_percent,
+        "activities_completed": len(completed_activity_progress),
+        "activities_total": len(activity_ids),
         "activity_percent": activity_percent,
         "learning_materials_completed": len(completed_topic_ids),
         "learning_materials_in_progress": len(in_progress_topic_ids),
         "learning_materials_total": len(topic_ids),
+        "quizzes_completed": len(completed_quiz_progress),
+        "quizzes_total": len(quiz_ids),
+        "quiz_average_percent": quiz_average_percent,
+        "completed_tasks": completed_items,
+        "incomplete_tasks": max(0, total_items - completed_items),
+        "total_tasks": total_items,
+        "handsign_practice_count": len(handsign_progress),
+        "handsign_best_score": max((item.highest_score for item in handsign_progress), default=None),
+        "latest_assessment_title": latest_assessment.title if latest_assessment else None,
+        "latest_assessment_type": latest_assessment.assessment_type if latest_assessment else None,
+        "latest_assessment_status": latest_assessment_progress.status if latest_assessment_progress else None,
+        "latest_assessment_score": latest_assessment_progress.score if latest_assessment_progress else None,
+        "latest_assessment_total": latest_assessment_progress.total if latest_assessment_progress else None,
+        "latest_assessment_completed_at": latest_assessment_progress.completed_at if latest_assessment_progress else None,
         "status": status_value,
         "last_activity": last_activity,
         "quiz_activity": quiz_activity,
     }
+
+
+def _score_percent(progress_rows: list[StudentQuizProgress]) -> int:
+    total = sum(item.total or 0 for item in progress_rows)
+    if not total:
+        return 0
+    return round(sum(item.score or 0 for item in progress_rows) / total * 100)
 
 
 def _format_quiz_activity(progress: StudentQuizProgress, db: Session):
@@ -572,7 +592,11 @@ def list_teacher_student_records(
 
     module_ids = [
         row.id for row in db.query(TeacherModule.id)
-        .filter(TeacherModule.teacher_id == current_user.id, TeacherModule.class_id.in_(class_ids))
+        .filter(
+            TeacherModule.teacher_id == current_user.id,
+            TeacherModule.class_id.in_(class_ids),
+            TeacherModule.status == "Published",
+        )
         .all()
     ]
     assessment_filters = [TeacherAssessment.teacher_id == current_user.id]
@@ -605,9 +629,9 @@ def list_teacher_student_records(
         )
         .all()
     ) if assessment_ids else []
-    progress_by_student: dict[int, list[StudentQuizProgress]] = {}
+    progress_by_student: dict[int, dict[int, StudentQuizProgress]] = {}
     for progress in progress_rows:
-        progress_by_student.setdefault(progress.student_id, []).append(progress)
+        progress_by_student.setdefault(progress.student_id, {})[progress.assessment_id] = progress
 
     handsign_rows = []
     if assessment_ids:
@@ -650,33 +674,54 @@ def list_teacher_student_records(
     for student in students:
         summary = _dashboard_progress_for_student(student, classes, db, current_user)
         assessment_records = []
-        for progress in sorted(progress_by_student.get(student.account_id, []), key=lambda item: item.updated_at or item.completed_at or utc_now(), reverse=True):
-            assessment = assessments_by_id.get(progress.assessment_id)
-            if not assessment:
-                continue
+        student_progress = progress_by_student.get(student.account_id, {})
+        for assessment in assessments:
+            progress = student_progress.get(assessment.id)
             expected_answers = [
                 str(question.get('answer') or '').strip()
                 for question in (assessment.questions or [])
                 if str(question.get('answer') or '').strip()
             ]
             retake_access = retake_by_student_assessment.get((student.account_id, assessment.id))
+            attempt_history = list(progress.attempt_history or []) if progress else []
+            attempt_count = (progress.attempt_count or len(attempt_history)) if progress else 0
+            if progress and progress.status == 'completed' and not attempt_history:
+                attempt_count = max(1, attempt_count)
+                attempt_history = [{
+                    'attempt_number': attempt_count,
+                    'score': progress.score,
+                    'total': progress.total,
+                    'answers': progress.answers or {},
+                    'submission_type': progress.submission_type,
+                    'completed_at': progress.completed_at.isoformat() if progress.completed_at else None,
+                }]
             assessment_records.append({
                 'assessment_id': assessment.id,
                 'title': assessment.title,
                 'assessment_type': assessment.assessment_type,
                 'expected_answers': expected_answers,
-                'status': progress.status,
-                'score': progress.score,
-                'total': progress.total,
-                'answers': progress.answers or {},
-                'completed_at': progress.completed_at,
-                'submission_type': progress.submission_type,
+                'status': progress.status if progress else 'not_started',
+                'score': progress.score if progress else None,
+                'total': progress.total if progress else len(assessment.questions or []),
+                'answers': progress.answers or {} if progress else {},
+                'completed_at': progress.completed_at if progress else None,
+                'submission_type': progress.submission_type if progress else None,
                 'retake_status': retake_access.status if retake_access else None,
+                'attempt_count': attempt_count,
+                'attempt_history': attempt_history,
             })
+
+        assessment_records.sort(
+            key=lambda item: item['completed_at'] or assessments_by_id[item['assessment_id']].created_at,
+            reverse=True,
+        )
 
         if status_filter and status_filter != 'all':
             normalized_status = status_filter.strip().lower().replace('_', ' ')
-            if normalized_status not in {summary['status'].lower(), *(item['status'].lower().replace('_', ' ') for item in assessment_records)}:
+            if normalized_status not in {
+                summary['status'].lower(),
+                *(item['status'].lower().replace('_', ' ') for item in assessment_records),
+            }:
                 continue
 
         handsign_records = []

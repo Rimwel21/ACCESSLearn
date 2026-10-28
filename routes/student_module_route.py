@@ -22,6 +22,10 @@ from services.student_module_service import (
     update_topic_progress,
 )
 from utils.dependencies import get_current_user, get_db
+from utils.student_guard import require_student
+
+
+STUDENT_ROUTE_DEPENDENCIES = [Depends(require_student)]
 
 
 class ProgressUpdate(BaseModel):
@@ -36,9 +40,9 @@ class RetakeRequestBody(BaseModel):
     reason: str | None = None
 
 
-router = APIRouter(prefix="/student/modules", tags=["Student Modules"])
-activities_router = APIRouter(prefix="/student/activities", tags=["Student Activities"])
-deadlines_router = APIRouter(prefix="/student/deadlines", tags=["Student Deadlines"])
+router = APIRouter(prefix="/student/modules", tags=["Student Modules"], dependencies=STUDENT_ROUTE_DEPENDENCIES)
+activities_router = APIRouter(prefix="/student/activities", tags=["Student Activities"], dependencies=STUDENT_ROUTE_DEPENDENCIES)
+deadlines_router = APIRouter(prefix="/student/deadlines", tags=["Student Deadlines"], dependencies=STUDENT_ROUTE_DEPENDENCIES)
 
 
 @activities_router.get("/", response_model=list[TeacherAssessmentOut])

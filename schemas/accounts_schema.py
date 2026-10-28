@@ -2,12 +2,13 @@ import re
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 from datetime import datetime
 from utils.enum import RoleEnum, VerificationStatus
+from utils.password_policy import validate_new_password
 
 
 class AccountRegister(BaseModel):
     username: str | None = Field(None, min_length=5, max_length=50)
     email: EmailStr | None = Field(None, min_length=5, max_length=50)
-    password: str = Field(min_length=8, max_length=30)
+    password: str = Field(min_length=8, max_length=72)
     role: RoleEnum
     full_name: str | None = Field(None, min_length=2, max_length=100)
     student_lrn: str | None = Field(None, min_length=12, max_length=12)
@@ -24,7 +25,7 @@ class AccountRegister(BaseModel):
         if not isinstance(data, dict):
             return data
 
-        for field in ["username", "email", "password", "full_name", "student_lrn", "accessibility_profile", "profile_image", "guardians_name", "guardians_contact_no"]:
+        for field in ["username", "email", "full_name", "student_lrn", "accessibility_profile", "profile_image", "guardians_name", "guardians_contact_no"]:
             value = data.get(field)
 
             if isinstance(value, str):
@@ -69,6 +70,11 @@ class AccountRegister(BaseModel):
 
         return value
 
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, value: str):
+        return validate_new_password(value)
+
     @field_validator("student_lrn")
     @classmethod
     def validate_student_lrn(cls, value: str | None):
@@ -83,7 +89,7 @@ class AccountRegister(BaseModel):
 class AccountLogin(BaseModel):
     username: str | None = Field(None, min_length=5, max_length=50)
     email: EmailStr | None = Field(None, min_length=5, max_length=50)
-    password: str = Field(min_length=8, max_length=30)
+    password: str = Field(min_length=8, max_length=72)
     role: RoleEnum | None = None
 
 class TokenResponse(BaseModel):

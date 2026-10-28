@@ -40,7 +40,8 @@ async def request_teacher_otp_route(request: Request,payload: TeacherOtpRequest,
     return await request_teacher_otp(request=request, db=db, email=payload.email)
 
 @router.post("/teacher/verify")
-async def verify_teacher_otp_route(payload: TeacherOtpVerify, db: Session = Depends(get_db)):
+@limiter.limit("5/minute")
+async def verify_teacher_otp_route(request: Request, payload: TeacherOtpVerify, db: Session = Depends(get_db)):
     return verify_teacher_otp(db=db,email=payload.email, otp=payload.otp)
 
 @router.post("/teacher/password-reset/request")
@@ -49,12 +50,14 @@ async def request_teacher_password_reset_route(request: Request, payload: Teache
     return await request_teacher_password_reset_otp(request=request, db=db, email=payload.email)
 
 @router.post("/teacher/password-reset/verify")
-async def verify_teacher_password_reset_route(payload: TeacherPasswordResetVerify, db: Session = Depends(get_db)):
+@limiter.limit("5/minute")
+async def verify_teacher_password_reset_route(request: Request, payload: TeacherPasswordResetVerify, db: Session = Depends(get_db)):
     return verify_teacher_password_reset_otp(db=db, email=payload.email, otp=payload.otp)
 
 @router.post("/teacher/password-reset/confirm")
-async def confirm_teacher_password_reset_route(payload: TeacherPasswordResetConfirm, db: Session = Depends(get_db)):
-    return confirm_teacher_password_reset(db=db, email=payload.email, otp=payload.otp, new_password=payload.new_password)
+@limiter.limit("5/minute")
+async def confirm_teacher_password_reset_route(request: Request, payload: TeacherPasswordResetConfirm, db: Session = Depends(get_db)):
+    return confirm_teacher_password_reset(request=request, db=db, email=payload.email, otp=payload.otp, new_password=payload.new_password)
 
 @router.post("/student/password-reset/request")
 @limiter.limit("2/minute")
@@ -62,12 +65,14 @@ async def request_student_password_reset_route(request: Request, payload: Studen
     return await request_student_password_reset_otp(request=request, db=db, username=payload.username)
 
 @router.post("/student/password-reset/verify")
-async def verify_student_password_reset_route(payload: StudentPasswordResetVerify, db: Session = Depends(get_db)):
+@limiter.limit("5/minute")
+async def verify_student_password_reset_route(request: Request, payload: StudentPasswordResetVerify, db: Session = Depends(get_db)):
     return verify_student_password_reset_otp(db=db, username=payload.username, otp=payload.otp)
 
 @router.post("/student/password-reset/confirm")
-async def confirm_student_password_reset_route(payload: StudentPasswordResetConfirm, db: Session = Depends(get_db)):
-    return confirm_student_password_reset(db=db, username=payload.username, otp=payload.otp, new_password=payload.new_password)
+@limiter.limit("5/minute")
+async def confirm_student_password_reset_route(request: Request, payload: StudentPasswordResetConfirm, db: Session = Depends(get_db)):
+    return confirm_student_password_reset(request=request, db=db, username=payload.username, otp=payload.otp, new_password=payload.new_password)
 
 @router.post("/admin/password-reset/request")
 @limiter.limit("2/minute")
@@ -75,9 +80,11 @@ async def request_admin_password_reset_route(request: Request, payload: AdminPas
     return await request_admin_password_reset_otp(request=request, db=db, email=payload.email)
 
 @router.post("/admin/password-reset/verify")
-async def verify_admin_password_reset_route(payload: AdminPasswordResetVerify, db: Session = Depends(get_db)):
+@limiter.limit("5/minute")
+async def verify_admin_password_reset_route(request: Request, payload: AdminPasswordResetVerify, db: Session = Depends(get_db)):
     return verify_admin_password_reset_otp(db=db, email=payload.email, otp=payload.otp)
 
 @router.post("/admin/password-reset/confirm")
-async def confirm_admin_password_reset_route(payload: AdminPasswordResetConfirm, db: Session = Depends(get_db)):
-    return confirm_admin_password_reset(db=db, email=payload.email, otp=payload.otp, new_password=payload.new_password)
+@limiter.limit("5/minute")
+async def confirm_admin_password_reset_route(request: Request, payload: AdminPasswordResetConfirm, db: Session = Depends(get_db)):
+    return confirm_admin_password_reset(request=request, db=db, email=payload.email, otp=payload.otp, new_password=payload.new_password)

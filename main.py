@@ -33,6 +33,7 @@ from services.schema_maintenance import ensure_academic_tables
 from routes.otp_route import router as otp_router
 from routes.admin_approval_route import router as admin_approval
 from limiter import limiter
+from core.config import settings
 
 logger = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).resolve().parent
@@ -53,34 +54,51 @@ async def custom_limit_handler(request: Request, exc: RateLimitExceeded):
         }
     )
 
-local_origins = [
+local_origins = [] if settings.is_production else [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
     "http://localhost:5177",
     "http://127.0.0.1:5177",
 ]
-configured_origins = [
-    origin.strip().rstrip("/")
-    for origin in os.getenv("CORS_ORIGINS", "").split(",")
-    if origin.strip()
-]
+configured_origins = settings.allowed_cors_origins
 origins = list(dict.fromkeys([*local_origins, *configured_origins]))
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
-    allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
+    allow_origin_regex=None if settings.is_production else r"http://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"]
 )
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+
+    if request.url.path.startswith(("/auth", "/otp", "/api")):
+        response.headers["Cache-Control"] = "no-store"
+
+    if settings.is_production and settings.enable_hsts:
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+
+    return response
 
 def cors_headers(request: Request):
     origin = request.headers.get("origin")
     if not origin:
         return {}
 
-    if origin in origins or origin.startswith("http://localhost:") or origin.startswith("http://127.0.0.1:"):
+    local_development_origin = (
+        not settings.is_production
+        and (origin.startswith("http://localhost:") or origin.startswith("http://127.0.0.1:"))
+    )
+    if origin in origins or local_development_origin:
         return {
             "Access-Control-Allow-Origin": origin,
             "Vary": "Origin",

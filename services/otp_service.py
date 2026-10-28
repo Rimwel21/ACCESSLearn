@@ -4,12 +4,35 @@ from sqlalchemy.orm import Session
 
 from models.accounts import Accounts
 from models.email_otp import EmailOTP
-from utils.enum import RoleEnum, VerificationStatus
+from utils.enum import AuditActionEnum, RoleEnum, VerificationStatus
 from utils.utc_now import utc_now
 from core.teacher_email_otp import EmailService
 from utils.generate_otp import hash_otp, generate_otp
 from auth.account_auth import hash_password
 from core.config import settings
+from services.audit_service import write_log
+
+
+def _record_password_reset_event(
+    db: Session,
+    *,
+    account: Accounts,
+    request: Request,
+    action: AuditActionEnum,
+) -> None:
+    try:
+        write_log(
+            db,
+            module="Authentication",
+            action=action,
+            actor_id=account.id,
+            actor_role=account.role,
+            affected_record=f"Account #{account.id}",
+            reason="Password reset requested" if action == AuditActionEnum.password_reset_requested else "Password reset completed",
+            request=request,
+        )
+    except Exception:
+        db.rollback()
 
 
 def _is_local_sqlite_database() -> bool:
@@ -152,6 +175,13 @@ async def request_teacher_password_reset_otp(request: Request, db: Session, emai
     if account.verification_status == VerificationStatus.blocked:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Blocked account cannot reset password")
 
+    _record_password_reset_event(
+        db,
+        account=account,
+        request=request,
+        action=AuditActionEnum.password_reset_requested,
+    )
+
     expired_otps = db.query(EmailOTP).filter(
         EmailOTP.email == email,
         EmailOTP.role == RoleEnum.teacher,
@@ -213,7 +243,7 @@ def verify_teacher_password_reset_otp(db: Session, email: str, otp: str):
     return {"message": "OTP verified. Enter a new password."}
 
 
-def confirm_teacher_password_reset(db: Session, email: str, otp: str, new_password: str):
+def confirm_teacher_password_reset(request: Request, db: Session, email: str, otp: str, new_password: str):
     account = db.query(Accounts).filter(
         Accounts.email == email,
         Accounts.role == RoleEnum.teacher,
@@ -234,6 +264,13 @@ def confirm_teacher_password_reset(db: Session, email: str, otp: str, new_passwo
     otp_record.is_used = True
     otp_record.verification_status = VerificationStatus.verified
     db.commit()
+
+    _record_password_reset_event(
+        db,
+        account=account,
+        request=request,
+        action=AuditActionEnum.password_reset_completed,
+    )
 
     return {"message": "Password reset successfully. You can now log in."}
 
@@ -280,6 +317,13 @@ async def request_student_password_reset_otp(request: Request, db: Session, user
 
     if account.verification_status == VerificationStatus.blocked:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Blocked account cannot reset password")
+
+    _record_password_reset_event(
+        db,
+        account=account,
+        request=request,
+        action=AuditActionEnum.password_reset_requested,
+    )
 
     expired_otps = db.query(EmailOTP).filter(
         EmailOTP.email == normalized_username,
@@ -356,7 +400,7 @@ def verify_student_password_reset_otp(db: Session, username: str, otp: str):
     return {"message": "OTP verified. Enter a new password."}
 
 
-def confirm_student_password_reset(db: Session, username: str, otp: str, new_password: str):
+def confirm_student_password_reset(request: Request, db: Session, username: str, otp: str, new_password: str):
     normalized_username = username.strip()
     account = db.query(Accounts).filter(
         Accounts.username == normalized_username,
@@ -372,6 +416,13 @@ def confirm_student_password_reset(db: Session, username: str, otp: str, new_pas
     otp_record.is_used = True
     otp_record.verification_status = VerificationStatus.verified
     db.commit()
+
+    _record_password_reset_event(
+        db,
+        account=account,
+        request=request,
+        action=AuditActionEnum.password_reset_completed,
+    )
 
     return {"message": "Password reset successfully. You can now log in."}
 
@@ -418,6 +469,13 @@ async def request_admin_password_reset_otp(request: Request, db: Session, email:
 
     if account.verification_status == VerificationStatus.blocked:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Blocked account cannot reset password")
+
+    _record_password_reset_event(
+        db,
+        account=account,
+        request=request,
+        action=AuditActionEnum.password_reset_requested,
+    )
 
     expired_otps = db.query(EmailOTP).filter(
         EmailOTP.email == email,
@@ -471,7 +529,7 @@ def verify_admin_password_reset_otp(db: Session, email: str, otp: str):
     return {"message": "OTP verified. Enter a new password."}
 
 
-def confirm_admin_password_reset(db: Session, email: str, otp: str, new_password: str):
+def confirm_admin_password_reset(request: Request, db: Session, email: str, otp: str, new_password: str):
     account = db.query(Accounts).filter(
         Accounts.email == email,
         Accounts.role == RoleEnum.admin,
@@ -486,6 +544,13 @@ def confirm_admin_password_reset(db: Session, email: str, otp: str, new_password
     otp_record.is_used = True
     otp_record.verification_status = VerificationStatus.verified
     db.commit()
+
+    _record_password_reset_event(
+        db,
+        account=account,
+        request=request,
+        action=AuditActionEnum.password_reset_completed,
+    )
 
     return {"message": "Password reset successfully. You can now log in."}
 

@@ -185,6 +185,7 @@ def set_student_retake_access(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Action must be approved or rejected")
 
     assessment = get_teacher_assessment(request, assessment_id, db, current_user)
+    _ensure_student_in_assessment_class(student_id, assessment, db, current_user)
     retake = db.query(AssessmentRetakeRequest).filter(
         AssessmentRetakeRequest.student_id == student_id,
         AssessmentRetakeRequest.assessment_id == assessment.id,
@@ -207,10 +208,11 @@ def set_student_retake_access(
 
     reset_count = 0
     if action == "approved":
-        reset_count = db.query(StudentQuizProgress).filter(
+        progress = db.query(StudentQuizProgress).filter(
             StudentQuizProgress.student_id == student_id,
             StudentQuizProgress.assessment_id == assessment.id,
-        ).delete(synchronize_session=False)
+        ).first()
+        reset_count = _reset_progress_for_retake(progress)
 
     db.commit()
     db.refresh(retake)
@@ -244,13 +246,79 @@ def review_retake_request(request: Request, retake_id: int, action: str, db: Ses
 
     reset_count = 0
     if action == "approved":
-        reset_count = db.query(StudentQuizProgress).filter(
+        progress = db.query(StudentQuizProgress).filter(
             StudentQuizProgress.student_id == retake.student_id,
             StudentQuizProgress.assessment_id == retake.assessment_id,
-        ).delete(synchronize_session=False)
+        ).first()
+        reset_count = _reset_progress_for_retake(progress)
 
     db.commit()
     return {"detail": f"Retake request {action}", "reset_count": reset_count}
+
+
+def _reset_progress_for_retake(progress: StudentQuizProgress | None) -> int:
+    if not progress:
+        return 0
+
+    history = list(progress.attempt_history or [])
+    completed_at = progress.completed_at.isoformat() if progress.completed_at else None
+    already_archived = bool(
+        completed_at
+        and any(item.get("completed_at") == completed_at for item in history)
+    )
+    if progress.status == "completed" and not already_archived:
+        attempt_number = max(progress.attempt_count or 0, len(history) + 1)
+        history.append({
+            "attempt_number": attempt_number,
+            "score": progress.score,
+            "total": progress.total,
+            "answers": progress.answers or {},
+            "submission_type": progress.submission_type,
+            "completed_at": completed_at,
+        })
+        progress.attempt_count = attempt_number
+        progress.attempt_history = history
+
+    progress.status = "in_progress"
+    progress.score = None
+    progress.total = None
+    progress.answers = {}
+    progress.started_at = None
+    progress.completed_at = None
+    progress.time_limit_seconds = None
+    progress.expires_at = None
+    progress.submission_type = None
+    return 1
+
+
+def _ensure_student_in_assessment_class(
+    student_id: int,
+    assessment: TeacherAssessment,
+    db: Session,
+    current_user: Accounts,
+) -> None:
+    class_id = assessment.class_id
+    if class_id is None and assessment.module_id is not None:
+        module = db.query(TeacherModule).filter(
+            TeacherModule.id == assessment.module_id,
+            TeacherModule.teacher_id == current_user.id,
+        ).first()
+        class_id = module.class_id if module else None
+
+    teacher_class = db.query(TeacherClass).filter(
+        TeacherClass.id == class_id,
+        TeacherClass.teacher_id == current_user.id,
+    ).first()
+    if not teacher_class:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Class not found")
+
+    student = db.query(StudentProfile.id).filter(
+        StudentProfile.account_id == student_id,
+        StudentProfile.grade_level_id == teacher_class.grade_level_id,
+        StudentProfile.section_id == teacher_class.section_id,
+    ).first()
+    if not student:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student not found in this class")
 
 
 def get_teacher_assessment(request: Request, assessment_id: int, db: Session, current_user: Accounts):

@@ -103,6 +103,30 @@ def write_log(
     return AuditLogRepository.create(db, log)
 
 
+def record_access_denied(
+    db: Session,
+    *,
+    request: Request,
+    actor,
+    required_role: RoleEnum,
+) -> None:
+    """Best-effort audit event that never changes the authorization result."""
+    try:
+        write_log(
+            db,
+            module="Authorization",
+            action=AuditActionEnum.access_denied,
+            actor_id=actor.id,
+            actor_role=actor.role,
+            affected_record=request.url.path,
+            reason=f"{required_role.value} role required",
+            request=request,
+            status="failed",
+        )
+    except Exception:
+        db.rollback()
+
+
 def get_audit_logs(
     db:           Session,
     *,

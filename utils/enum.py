@@ -39,6 +39,10 @@ class SectionStatusEnum(str, Enum):
 
 class AuditActionEnum(str, Enum):
     logged_in = "logged_in"
+    login_failed = "login_failed"
+    access_denied = "access_denied"
+    password_reset_requested = "password_reset_requested"
+    password_reset_completed = "password_reset_completed"
     submitted_quiz = "submitted_quiz"
     completed_topic = "completed_topic"
     section_update = "section_update"

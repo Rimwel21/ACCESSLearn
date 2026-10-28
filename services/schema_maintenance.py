@@ -425,6 +425,32 @@ def _ensure_student_quiz_progress_schema() -> None:
                 connection.execute(text(
                     "ALTER TABLE student_quiz_progress ADD COLUMN submission_type VARCHAR(20)"
                 ))
+        if "attempt_count" not in columns:
+            if is_pg:
+                connection.execute(text(
+                    "ALTER TABLE student_quiz_progress "
+                    "ADD COLUMN IF NOT EXISTS attempt_count INTEGER NOT NULL DEFAULT 0"
+                ))
+            else:
+                connection.execute(text(
+                    "ALTER TABLE student_quiz_progress "
+                    "ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0"
+                ))
+            connection.execute(text(
+                "UPDATE student_quiz_progress SET attempt_count = 1 "
+                "WHERE status = 'completed' AND attempt_count = 0"
+            ))
+        if "attempt_history" not in columns:
+            if is_pg:
+                connection.execute(text(
+                    "ALTER TABLE student_quiz_progress "
+                    "ADD COLUMN IF NOT EXISTS attempt_history JSONB NOT NULL DEFAULT '[]'::jsonb"
+                ))
+            else:
+                connection.execute(text(
+                    "ALTER TABLE student_quiz_progress "
+                    "ADD COLUMN attempt_history JSON NOT NULL DEFAULT '[]'"
+                ))
         if is_pg:
             connection.execute(text(
                 "ALTER TABLE student_quiz_progress "

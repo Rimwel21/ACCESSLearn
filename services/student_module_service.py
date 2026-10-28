@@ -1,5 +1,6 @@
 from datetime import timedelta
 from pathlib import Path
+import re
 from fastapi import HTTPException, Request, status
 from sqlalchemy.orm import Session, joinedload
 from models.accounts import Accounts
@@ -260,7 +261,7 @@ def get_student_module(request: Request, module_id: int, db: Session, current_us
         "due_at": module.due_at,
         "created_at": module.created_at,
         "updated_at": module.updated_at,
-        "topics": module.topics,
+        "topics": _visible_topics(module.topics),
         "checkpoints": student_module_checkpoints(module, db, current_user),
         "assessments": [_assessment_to_dict(assessment, db, current_user) for assessment in _module_assessments(module, db)],
     }
@@ -269,13 +270,7 @@ def get_student_module(request: Request, module_id: int, db: Session, current_us
 def get_module_progress(request: Request, module_id: int, db: Session, current_user: Accounts):
     _ensure_student(current_user)
     _ensure_enrolled_module(module_id, db, current_user)
-    topic_ids = [
-        topic.id for topic in db.query(LearningTopic.id)
-        .join(TeacherModule, TeacherModule.id == LearningTopic.module_id)
-        .filter(TeacherModule.id == module_id, TeacherModule.status == "Published")
-        .order_by(LearningTopic.sort_order.asc(), LearningTopic.id.asc())
-        .all()
-    ]
+    topic_ids = _visible_topic_ids(module_id, db)
     quiz_ids = _quiz_ids_for_module(module_id, db)
     checkpoint_ids = [
         row.id for row in db.query(ModuleCheckpoint.id)
@@ -435,6 +430,7 @@ def start_quiz_progress(request: Request, module_id: int, quiz_id: int, db: Sess
     expired = _is_time_limit_expired(assessment, progress)
     if expired and progress.status != "completed":
         _complete_assessment_progress(progress, assessment, progress.answers or {}, "timed_out")
+        _consume_approved_retake(assessment, db, current_user)
 
     db.commit()
     if progress.status == "completed":
@@ -475,6 +471,7 @@ def save_quiz_answers(request: Request, module_id: int, quiz_id: int, answers: d
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Quiz already submitted")
     if _is_time_limit_expired(assessment, progress):
         _complete_assessment_progress(progress, assessment, progress.answers or {}, "timed_out")
+        _consume_approved_retake(assessment, db, current_user)
         db.commit()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Quiz time limit has expired")
 
@@ -558,15 +555,6 @@ def submit_class_activity_progress(request: Request, activity_id: int, answers: 
     if progress and progress.status == "completed":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Activity already submitted")
 
-    questions = activity.get("questions") or []
-    total = len(questions)
-    score = 0
-    for index, question in enumerate(questions):
-        expected = question.get("answer") or ""
-        actual = str(answers.get(str(index), answers.get(index, "")))
-        if expected and _answers_match_question(question, actual, expected):
-            score += 1
-
     if not progress:
         progress = StudentQuizProgress(
             student_id=current_user.id,
@@ -575,18 +563,13 @@ def submit_class_activity_progress(request: Request, activity_id: int, answers: 
         )
         db.add(progress)
 
-    progress.status = "completed"
-    progress.score = score
-    progress.total = total
-    progress.answers = answers
-    progress.started_at = progress.started_at or utc_now()
-    progress.submission_type = "manual"
-    progress.completed_at = utc_now()
+    _complete_assessment_progress(progress, assessment, answers, "manual")
+    _consume_approved_retake(assessment, db, current_user)
     db.commit()
 
     return {
-        "score": score,
-        "total": total,
+        "score": progress.score or 0,
+        "total": progress.total or 0,
     }
 
 
@@ -617,13 +600,14 @@ def _get_student_assessment(module_id: int, assessment_id: int, db: Session, ass
 
 
 def _ensure_quiz_unlocked(module_id: int, db: Session, current_user: Accounts):
-    topic_count = db.query(LearningTopic).filter(LearningTopic.module_id == module_id).count()
+    topic_ids = _visible_topic_ids(module_id, db)
     completed_topic_count = db.query(StudentTopicProgress).filter(
         StudentTopicProgress.student_id == current_user.id,
         StudentTopicProgress.module_id == module_id,
+        StudentTopicProgress.topic_id.in_(topic_ids),
         StudentTopicProgress.status == "completed",
-    ).count()
-    if topic_count and completed_topic_count < topic_count:
+    ).count() if topic_ids else 0
+    if topic_ids and completed_topic_count < len(topic_ids):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Complete all topics before taking the quiz")
     checkpoint_count = db.query(ModuleCheckpoint.id).filter(ModuleCheckpoint.module_id == module_id).count()
     completed_checkpoint_count = (
@@ -744,6 +728,18 @@ def _complete_assessment_progress(progress: StudentQuizProgress, assessment: Tea
     progress.started_at = progress.started_at or utc_now()
     progress.submission_type = submission_type
     progress.completed_at = utc_now()
+    history = list(progress.attempt_history or [])
+    attempt_number = max(progress.attempt_count or 0, len(history)) + 1
+    history.append({
+        "attempt_number": attempt_number,
+        "score": score,
+        "total": len(questions),
+        "answers": answers or {},
+        "submission_type": submission_type,
+        "completed_at": progress.completed_at.isoformat(),
+    })
+    progress.attempt_count = attempt_number
+    progress.attempt_history = history
 
 
 def _score_answers(questions: list[dict], answers: dict):
@@ -901,19 +897,14 @@ def _module_to_student_dict(module: TeacherModule, db: Session, current_user: Ac
         "due_at": module.due_at,
         "created_at": module.created_at,
         "updated_at": module.updated_at,
-        "topics": module.topics,
+        "topics": _visible_topics(module.topics),
         "checkpoints": student_module_checkpoints(module, db, current_user),
         "assessments": [_assessment_to_dict(assessment, db, current_user) for assessment in _module_assessments(module, db)],
     }
 
 
 def _ensure_topic_unlocked(module_id: int, topic_id: int, db: Session, current_user: Accounts):
-    topic_ids = [
-        row.id for row in db.query(LearningTopic.id)
-        .filter(LearningTopic.module_id == module_id)
-        .order_by(LearningTopic.sort_order.asc(), LearningTopic.id.asc())
-        .all()
-    ]
+    topic_ids = _visible_topic_ids(module_id, db)
     try:
         topic_index = topic_ids.index(topic_id)
     except ValueError:
@@ -952,6 +943,29 @@ def _ensure_topic_unlocked(module_id: int, topic_id: int, db: Session, current_u
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Submit the 5-question checkpoint before opening the next 10 topics",
             )
+
+
+def _visible_topic_ids(module_id: int, db: Session) -> list[int]:
+    topics = db.query(LearningTopic).filter(
+        LearningTopic.module_id == module_id,
+    ).order_by(LearningTopic.sort_order.asc(), LearningTopic.id.asc()).all()
+    return [topic.id for topic in _visible_topics(topics)]
+
+
+def _visible_topics(topics: list[LearningTopic]) -> list[LearningTopic]:
+    slide_marker = re.compile(r"^-{2,}\s*Slide\s*\d+\s*-{2,}$", re.IGNORECASE)
+    seen: set[str] = set()
+    visible = []
+    for topic in sorted(topics, key=lambda item: (item.sort_order, item.id)):
+        title = topic.title or ""
+        if slide_marker.match(title):
+            continue
+        key = re.sub(r"[^a-z0-9]", "", title.lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        visible.append(topic)
+    return visible
 
 
 def _is_module_complete(request: Request, module_id: int, db: Session, current_user: Accounts):

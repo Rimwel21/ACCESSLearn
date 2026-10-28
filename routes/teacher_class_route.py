@@ -13,7 +13,8 @@ from services.teacher_class_service import (
     list_teacher_classes,
     list_teacher_student_records,
 )
-from utils.dependencies import get_current_user, get_db
+from utils.dependencies import get_db
+from utils.teacher_guard import require_teacher
 
 
 router = APIRouter(prefix="/teacher/classes", tags=["Teacher Classes"])
@@ -25,7 +26,7 @@ def get_teacher_dashboard_summary_route(
     request: Request,
     class_id: int | None = Query(None),
     db: Session = Depends(get_db),
-    current_user: Accounts = Depends(get_current_user)
+    current_user: Accounts = Depends(require_teacher)
 ):
     return get_teacher_dashboard_summary(
         request=request,
@@ -44,7 +45,7 @@ def list_teacher_student_records_route(
     status_filter: str | None = Query(None),
     search: str | None = Query(None),
     db: Session = Depends(get_db),
-    current_user: Accounts = Depends(get_current_user),
+    current_user: Accounts = Depends(require_teacher),
 ):
     return list_teacher_student_records(
         request=request,
@@ -63,7 +64,7 @@ def list_recent_activities_route(
     request: Request,
     limit: int = Query(10, ge=1, le=50),
     db: Session = Depends(get_db),
-    current_user: Accounts = Depends(get_current_user)
+    current_user: Accounts = Depends(require_teacher)
 ):
     return list_recent_activities(
         request=request,
@@ -78,7 +79,7 @@ def list_recent_activities_route(
 def list_teacher_classes_route(
     request: Request,
     db: Session = Depends(get_db),
-    current_user: Accounts = Depends(get_current_user)
+    current_user: Accounts = Depends(require_teacher)
 ):
     return list_teacher_classes(
         request=request,
@@ -93,7 +94,7 @@ def create_teacher_class_route(
     request: Request,
     teacher_class: TeacherClassCreate,
     db: Session = Depends(get_db),
-    current_user: Accounts = Depends(get_current_user)
+    current_user: Accounts = Depends(require_teacher)
 ):
     return create_teacher_class(
         request=request,
@@ -109,7 +110,7 @@ def get_teacher_class_route(
     request: Request,
     class_id: int,
     db: Session = Depends(get_db),
-    current_user: Accounts = Depends(get_current_user)
+    current_user: Accounts = Depends(require_teacher)
 ):
     return get_teacher_class(
         request=request,
@@ -125,7 +126,7 @@ def list_class_students_route(
     request: Request,
     class_id: int,
     db: Session = Depends(get_db),
-    current_user: Accounts = Depends(get_current_user)
+    current_user: Accounts = Depends(require_teacher)
 ):
     return list_class_students(
         request=request,
@@ -159,7 +160,7 @@ def delete_teacher_class_route(
     request: Request,
     class_id: int,
     db: Session = Depends(get_db),
-    current_user: Accounts = Depends(get_current_user)
+    current_user: Accounts = Depends(require_teacher)
 ):
     return delete_teacher_class(
         request=request,

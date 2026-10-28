@@ -1,10 +1,12 @@
 from database.connection import SessionLocal
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from jose import jwt, JWTError, ExpiredSignatureError
 from core.config import settings
 from models.accounts import Accounts
+from services.audit_service import write_log
+from utils.enum import AccountStatusEnum, AuditActionEnum, VerificationStatus
 # db session
 def get_db():
 
@@ -17,7 +19,7 @@ def get_db():
 # current user ng system
 oauth2_scheme = HTTPBearer()
 
-def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+def get_current_user(request: Request, credentials: HTTPAuthorizationCredentials = Depends(oauth2_scheme), db: Session = Depends(get_db)):
 
     token = credentials.credentials
 
@@ -45,5 +47,23 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(oauth2_
 
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not authenticated")
+
+    allowed_account_statuses = {AccountStatusEnum.active, AccountStatusEnum.waiting_assignment}
+    if user.verification_status != VerificationStatus.verified or user.account_status not in allowed_account_statuses:
+        try:
+            write_log(
+                db,
+                module="Authentication",
+                action=AuditActionEnum.access_denied,
+                actor_id=user.id,
+                actor_role=user.role,
+                affected_record=request.url.path,
+                reason="Inactive, pending, suspended, archived, or blocked account used an existing token",
+                request=request,
+                status="failed",
+            )
+        except Exception:
+            db.rollback()
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account is not active")
     
     return user

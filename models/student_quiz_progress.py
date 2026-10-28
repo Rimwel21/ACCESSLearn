@@ -20,6 +20,8 @@ class StudentQuizProgress(Base):
     time_limit_seconds = Column(Integer, nullable=True)
     expires_at = Column(DateTime(timezone=True), nullable=True)
     submission_type = Column(String(20), nullable=True)
+    attempt_count = Column(Integer, default=0, nullable=False)
+    attempt_history = Column(JSON, default=list, nullable=False)
 
     started_at = Column(DateTime(timezone=True), nullable=True)
     completed_at = Column(DateTime(timezone=True), nullable=True)

@@ -5,6 +5,7 @@ from models.file_upload import FileUpload
 from models.accounts import Accounts
 from utils.storage import upload_file, delete_file
 from utils.enum import FileCategory, RoleEnum
+from core.config import settings
 from models.student_profile import StudentProfile
 from models.teacher_profile import TeacherProfile
 
@@ -37,6 +38,25 @@ async def upload_image_profile(request: Request, image: UploadFile, db:Session, 
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only image files are allowed")
     
     file_bytes = await image.read()
+    maximum_size = settings.max_profile_image_upload_mb * 1024 * 1024
+    if not file_bytes:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded image is empty")
+    if len(file_bytes) > maximum_size:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail=f"Image exceeds the {settings.max_profile_image_upload_mb} MB upload limit",
+        )
+
+    signatures = {
+        "image/jpeg": lambda data: data.startswith(b"\xff\xd8\xff"),
+        "image/png": lambda data: data.startswith(b"\x89PNG\r\n\x1a\n"),
+        "image/webp": lambda data: data.startswith(b"RIFF") and data[8:12] == b"WEBP",
+    }
+    if not signatures[image.content_type](file_bytes):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Image content does not match the selected file type",
+        )
 
     try:
         uploaded = await asyncio.to_thread(
