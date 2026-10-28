@@ -1,0 +1,394 @@
+﻿APPENDIX H
+SOURCE CODE
+System: SIGNHEAR
+
+This appendix presents selected source-code excerpts from the SIGNHEAR system. The full repository contains the complete backend, frontend, database models, routes, services, user interfaces, and sign-language recognition modules. For document readability, this appendix includes representative code only. Secret keys, environment variables, database files, uploaded files, generated build output, and machine-learning binary assets are intentionally excluded.
+
+============================================================
+1. BACKEND APPLICATION ENTRY POINT
+============================================================
+
+File: E-Learn/Backend/main.py
+
+```python
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from core.config import settings
+from routes import accounts_route, admin_route, teacher_class_route
+from routes import teacher_module_route, teacher_assessment_route
+from routes import teacher_section_route, student_module_route, handsign_route
+
+app = FastAPI(title="SIGNHEAR API")
+
+local_origins = [] if settings.is_production else [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:5177",
+    "http://127.0.0.1:5177",
+]
+configured_origins = settings.allowed_cors_origins
+origins = list(dict.fromkeys([*local_origins, *configured_origins]))
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_origin_regex=None if settings.is_production else r"http://(localhost|127\.0\.0\.1)(:\d+)?",
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
+)
+
+app.include_router(accounts_route.router)
+app.include_router(admin_route.router)
+app.include_router(teacher_class_route.router)
+app.include_router(teacher_module_route.router)
+app.include_router(teacher_assessment_route.router)
+app.include_router(teacher_section_route.router)
+app.include_router(student_module_route.router)
+app.include_router(handsign_route.router)
+```
+
+This file initializes the SIGNHEAR backend API, restricts cross-origin access to configured frontend origins and local development addresses, and registers the main route modules for student, teacher, administrator, assessment, module, and sign-language features. Production frontend origins are supplied through CORS_ORIGINS; wildcard origins are not used.
+
+============================================================
+2. DATABASE CONNECTION
+============================================================
+
+File: E-Learn/Backend/database/connection.py
+
+```python
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, declarative_base
+from core.config import settings
+
+# SQLite requires check_same_thread=False for FastAPI's async threading
+connect_args = {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}
+
+engine_kwargs = {"connect_args": connect_args}
+if not settings.database_url.startswith("sqlite"):
+    engine_kwargs.update({
+        "pool_pre_ping": True,
+        "pool_recycle": 1800,
+    })
+
+engine = create_engine(settings.database_url, **engine_kwargs)
+
+SessionLocal = sessionmaker(
+    autoflush=False,
+    autocommit=False,
+    bind=engine
+)
+
+Base = declarative_base()
+```
+
+This module configures the database layer. SIGNHEAR uses SQLite for local development and Supabase PostgreSQL for production or staging. PostgreSQL connections use pre-ping and connection recycling; the request-scoped `get_db()` dependency is defined in `utils/dependencies.py`.
+
+============================================================
+3. ACCOUNT AUTHENTICATION
+============================================================
+
+File: E-Learn/Backend/auth/account_auth.py
+
+```python
+from datetime import datetime, timedelta, timezone
+from jose import jwt
+from passlib.context import CryptContext
+from core.config import settings
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def hash_password(password: str):
+    return pwd_context.hash(password)
+
+def verify_password(plain: str, hashed: str) -> bool:
+    return pwd_context.verify(plain, hashed)
+
+def create_access_token(data: dict):
+    to_encode = data.copy()
+    expire = datetime.now(timezone.utc) + timedelta(
+        minutes=settings.access_token_expire_minutes
+    )
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, settings.secret_key, algorithm=settings.algorithm)
+```
+
+This file handles password hashing, password verification, and JWT access-token creation. It supports secure login sessions for student, teacher, and administrator accounts.
+
+============================================================
+4. GRADE LEVEL RESTRICTION
+============================================================
+
+File: E-Learn/Backend/services/academic_service.py
+
+```python
+ALLOWED_GRADE_NAMES = ("Grade 4", "Grade 5", "Grade 6")
+
+def validate_supported_grade_name(name: str) -> str:
+    normalized = name.strip()
+    if normalized not in ALLOWED_GRADE_NAMES:
+        raise ValueError("Only Grade 4, Grade 5, and Grade 6 are supported.")
+    return normalized
+```
+
+This logic limits SIGNHEAR academic workflows to supported grade levels only. Grade 1 to Grade 3 records are hidden or blocked from system workflows, while Grade 4 to Grade 6 remain available.
+
+============================================================
+5. TEACHER SECTION ROUTES
+============================================================
+
+File: E-Learn/Backend/routes/teacher_section_route.py
+
+```python
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from database.connection import get_db
+from utils.dependencies import get_current_user
+from models.accounts import Accounts
+
+router = APIRouter(prefix="/teacher/sections", tags=["Teacher Sections"])
+
+@router.get("/available")
+def available_sections(db: Session = Depends(get_db), current_user: Accounts = Depends(get_current_user)):
+    if current_user.role != "teacher":
+        raise HTTPException(status_code=403, detail="Teacher access required")
+    return {"sections": []}
+
+@router.post("/{section_id}/select")
+def select_section(section_id: int, db: Session = Depends(get_db), current_user: Accounts = Depends(get_current_user)):
+    if current_user.role != "teacher":
+        raise HTTPException(status_code=403, detail="Teacher access required")
+    return {"section_id": section_id, "selected": True}
+```
+
+These routes allow a teacher to view available sections and select a section for class handling. This supports teacher workflows for modules, activities, quizzes, and student records.
+
+============================================================
+6. HANDSIGN ROUTES
+============================================================
+
+File: E-Learn/Backend/routes/handsign_route.py
+
+```python
+from fastapi import APIRouter, Depends, HTTPException, Request
+from utils.dependencies import get_current_user
+from models.accounts import Accounts
+from schemas.handsign.prediction import PredictionRequest, PredictionResponse
+
+router = APIRouter(prefix="/api/handsign", tags=["Hand Sign Language"])
+
+@router.get("/health")
+def health(current_user: Accounts = Depends(get_current_user)):
+    return {"status": "ready"}
+
+@router.post("/predict", response_model=PredictionResponse)
+def predict(payload: PredictionRequest, request: Request, current_user: Accounts = Depends(get_current_user)):
+    service = getattr(request.app.state, "handsign_prediction_service", None)
+    if service is None:
+        raise HTTPException(status_code=503, detail="Prediction service unavailable")
+    return service.predict_frame(payload.image)
+```
+
+The hand-sign route group provides camera-based sign-language recognition endpoints. It includes health checking, image prediction, camera detection, tutorial videos, dataset labels, and practice scoring.
+
+============================================================
+7. FRONTEND API WRAPPER
+============================================================
+
+File: E-Learn/frontend/src/lib/api.ts
+
+```typescript
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000"
+
+export async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const token = localStorage.getItem("access_token")
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(options.headers || {}),
+    },
+  })
+
+  if (!response.ok) {
+    const message = await response.text()
+    throw new Error(message || "Request failed")
+  }
+
+  return response.json()
+}
+```
+
+This frontend helper centralizes API requests. It attaches the stored JWT token, sends requests to the backend, and raises readable errors when requests fail.
+
+============================================================
+8. FRONTEND ROUTER
+============================================================
+
+File: E-Learn/frontend/src/router/index.ts
+
+```typescript
+import { createRouter, createWebHistory } from "vue-router"
+import LandingPage from "@/pages/LandingPage.vue"
+import LoginPage from "@/pages/auth/LoginPage.vue"
+import StudentDashboard from "@/pages/student/DashboardPage.vue"
+import TeacherDashboard from "@/pages/teacher/DashboardPage.vue"
+import AdminDashboard from "@/pages/admin/DashboardPage.vue"
+
+const router = createRouter({
+  history: createWebHistory(),
+  routes: [
+    { path: "/", component: LandingPage },
+    { path: "/portal", component: LoginPage },
+    { path: "/student/dashboard", component: StudentDashboard },
+    { path: "/teacher/dashboard", component: TeacherDashboard },
+    { path: "/admin/dashboard", component: AdminDashboard },
+  ],
+})
+
+export default router
+```
+
+The router defines SIGNHEAR page navigation. It connects the landing page, authentication portal, student dashboard, teacher dashboard, and administrator dashboard.
+
+============================================================
+9. STUDENT LAYOUT NAVIGATION
+============================================================
+
+File: E-Learn/frontend/src/components/layout/StudentLayout.vue
+
+```vue
+<template>
+  <aside class="student-sidebar">
+    <h1>SIGNHEAR</h1>
+    <p>STUDENT</p>
+    <RouterLink to="/student/dashboard">Home</RouterLink>
+    <RouterLink to="/student/quiz">Quizzes</RouterLink>
+    <RouterLink to="/student/activities">Activities</RouterLink>
+    <button @click="logout">Logout</button>
+  </aside>
+  <main class="student-content"><RouterView /></main>
+</template>
+
+<script setup lang="ts">
+import { useRouter } from "vue-router"
+const router = useRouter()
+function logout() {
+  localStorage.removeItem("access_token")
+  router.push("/portal")
+}
+</script>
+```
+
+The student layout provides consistent navigation for learning modules, quizzes, activities, and logout. It supports the learner-facing side of SIGNHEAR.
+
+============================================================
+10. SIGN-LANGUAGE SERVICE
+============================================================
+
+File: E-Learn/frontend/src/services/handsign.ts
+
+```typescript
+import axios from "axios"
+import { API_BASE_URL } from "@/lib/api"
+
+const handsignApi = axios.create({ baseURL: `${API_BASE_URL}/api/handsign` })
+
+handsignApi.interceptors.request.use((config) => {
+  const token = localStorage.getItem("access_token")
+  if (token) config.headers.Authorization = `Bearer ${token}`
+  return config
+})
+
+export async function checkHandsignHealth() {
+  const response = await handsignApi.get("/health")
+  return response.data
+}
+
+export async function predictHandSign(image: string) {
+  const response = await handsignApi.post("/predict", { image })
+  return response.data
+}
+```
+
+This service connects the frontend camera/sign-language components to the backend recognition API. It sends authenticated requests for health checks, predictions, tutorial scoring, and practice records.
+
+============================================================
+11. HANDSIGN LANGUAGE PAGE
+============================================================
+
+File: E-Learn/frontend/src/pages/student/HandSignLanguagePage.vue
+
+```vue
+<template>
+  <section class="handsign-page">
+    <SignLanguageToggle v-model="signMode" />
+    <aside class="alphabet-guide">
+      <h2>Guide Sign Language Alphabet</h2>
+      <img :src="alphabetChart" alt="Guide Sign Language Alphabet" />
+      <div class="letter-grid">
+        <button v-for="letter in letters" :key="letter" @click="selected = letter">
+          {{ letter }}
+        </button>
+      </div>
+    </aside>
+    <HandCamera v-if="signMode" @prediction="handlePrediction" />
+    <PredictionDisplay :prediction="prediction" />
+  </section>
+</template>
+
+<script setup lang="ts">
+import { ref } from "vue"
+import HandCamera from "@/components/handsign/HandCamera.vue"
+import PredictionDisplay from "@/components/handsign/PredictionDisplay.vue"
+import SignLanguageToggle from "@/components/handsign/SignLanguageToggle.vue"
+import alphabetChart from "@/assets/handsign/asl_alphabet_chart.png"
+const signMode = ref(false)
+const selected = ref("A")
+const prediction = ref(null)
+const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("")
+function handlePrediction(result: any) { prediction.value = result }
+</script>
+```
+
+This page supports sign-language interaction for activities. It provides a visual alphabet guide, camera-based sign recognition, prediction display, and optional sign-language answer mode.
+
+============================================================
+12. OFFLINE LOGIN SUPPORT
+============================================================
+
+File: E-Learn/frontend/src/lib/offlineDb.ts
+
+```typescript
+export type OfflineAccount = {
+  username: string
+  role: "student" | "teacher" | "admin"
+  passwordHash: string
+  savedAt: string
+}
+
+const OFFLINE_ACCOUNTS_KEY = "signhear_offline_accounts"
+
+export function saveOfflineAccount(account: OfflineAccount) {
+  const records = getOfflineAccounts()
+  const next = records.filter((item) => item.username !== account.username)
+  next.push(account)
+  localStorage.setItem(OFFLINE_ACCOUNTS_KEY, JSON.stringify(next))
+}
+
+export function getOfflineAccounts(): OfflineAccount[] {
+  const raw = localStorage.getItem(OFFLINE_ACCOUNTS_KEY)
+  return raw ? JSON.parse(raw) : []
+}
+```
+
+Offline support allows a user who has logged in online before to access cached content on the same device when internet is unavailable. Registration still requires internet access.
+
+============================================================
+SUMMARY
+============================================================
+
+The selected source-code excerpts show the major implementation areas of SIGNHEAR: backend API initialization, database management, secure authentication, grade restrictions, teacher section workflows, hand-sign recognition routes, frontend API integration, page routing, student navigation, sign-language services, sign-language learning pages, and offline login support.
+
+These modules work together to provide an inclusive learning management system for students with hearing impairment, with visual learning materials, sign-language support, teacher-managed assessments, administrator monitoring, and student progress tracking.
