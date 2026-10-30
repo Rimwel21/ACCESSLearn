@@ -15,6 +15,10 @@ class LearningTopic(Base):
     content = Column(Text, nullable=False)
     image_url = Column(String(500), nullable=True)
     page_image_urls = Column(JSON, default=list, nullable=False)
+    # Teacher-only preview keeps all images visible.  Student responses remove
+    # URLs in this list, allowing an individual unnecessary image to be hidden
+    # without changing slide order, checkpoints, or student progress.
+    hidden_image_urls = Column(JSON, default=list, nullable=False)
     sort_order = Column(Integer, default=1, nullable=False)
 
     module = relationship("TeacherModule", back_populates="topics")

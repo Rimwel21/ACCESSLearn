@@ -21,6 +21,10 @@ class TeacherModule(Base):
     file_size = Column(Integer, nullable=True)
     status = Column(String(20), default="Unpublished", nullable=False)
     behavior_required = Column(String(10), default="true", nullable=False)
+    # PPT/PDF conversions happen in a worker.  Keeping this state in the
+    # database (rather than process memory) prevents students from seeing the
+    # temporary extracted-text version before the final slide pages are ready.
+    material_processing_status = Column(String(20), default="ready", nullable=False)
     estimated_time = Column(String(30), nullable=True)
     due_at = Column(DateTime(timezone=True), nullable=True)
 

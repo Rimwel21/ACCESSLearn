@@ -67,6 +67,7 @@ def ensure_academic_tables() -> None:
     _ensure_teacher_activity_week_schema()
     _ensure_checkpoint_and_remediation_schema()
     _ensure_topic_sign_video_schema()
+    _ensure_material_preview_schema()
     _ensure_notification_schema()
     _ensure_teacher_invitation_schema()
     _ensure_push_notification_schema()
@@ -74,6 +75,37 @@ def ensure_academic_tables() -> None:
     _ensure_hi_sections_teacher_id()
     _ensure_account_statuses()
     _seed_default_academic_options()
+
+
+def _ensure_material_preview_schema() -> None:
+    """Add persisted processing and per-image visibility fields for old DBs."""
+    inspector = inspect(engine)
+    is_pg = engine.dialect.name == "postgresql"
+
+    if inspector.has_table("teacher_modules"):
+        columns = {column["name"] for column in inspector.get_columns("teacher_modules")}
+        if "material_processing_status" not in columns:
+            statement = (
+                "ALTER TABLE teacher_modules ADD COLUMN IF NOT EXISTS "
+                "material_processing_status VARCHAR(20) NOT NULL DEFAULT 'ready'"
+                if is_pg else
+                "ALTER TABLE teacher_modules ADD COLUMN material_processing_status VARCHAR(20) NOT NULL DEFAULT 'ready'"
+            )
+            with engine.begin() as connection:
+                connection.execute(text(statement))
+
+    inspector = inspect(engine)
+    if inspector.has_table("learning_topics"):
+        columns = {column["name"] for column in inspector.get_columns("learning_topics")}
+        if "hidden_image_urls" not in columns:
+            # PostgreSQL uses JSON; SQLite accepts JSON as an affinity name.
+            statement = (
+                "ALTER TABLE learning_topics ADD COLUMN IF NOT EXISTS hidden_image_urls JSON NOT NULL DEFAULT '[]'"
+                if is_pg else
+                "ALTER TABLE learning_topics ADD COLUMN hidden_image_urls JSON NOT NULL DEFAULT '[]'"
+            )
+            with engine.begin() as connection:
+                connection.execute(text(statement))
 
 
 def _ensure_account_statuses() -> None:

@@ -181,18 +181,21 @@ async def create_teacher_module_upload(
     db.add(new_module)
     db.commit()
     db.refresh(new_module)
-    try:
-        _process_material_topics(db, new_module, saved_path, render_presentation=False)
-    except Exception:
-        db.delete(new_module)
-        db.commit()
-        if saved_path.exists():
-            saved_path.unlink()
-        _delete_presentation_slide_images(new_module)
-        raise
-    db.refresh(new_module)
     if _requires_background_material_processing(saved_path):
+        new_module.material_processing_status = "processing"
+        db.commit()
         _queue_material_topic_regeneration(new_module.id)
+    else:
+        try:
+            _process_material_topics(db, new_module, saved_path)
+        except Exception:
+            db.delete(new_module)
+            db.commit()
+            if saved_path.exists():
+                saved_path.unlink()
+            _delete_presentation_slide_images(new_module)
+            raise
+    db.refresh(new_module)
     queue_module_notification(new_module.id)
 
     return new_module
@@ -210,13 +213,47 @@ def get_teacher_module(request: Request, module_id: int, db: Session, current_us
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Module not found")
 
     if _needs_material_topic_regeneration(module):
-        _ensure_presentation_fallback_topics(db, module)
+        # Do not publish the temporary extracted-text PPT topics.  They have a
+        # different slide count from the final LibreOffice pages and caused the
+        # teacher and student views to change underneath a learner.
+        if module.material_processing_status != "processing":
+            module.material_processing_status = "processing"
+            db.commit()
+            db.refresh(module)
         _queue_material_topic_regeneration(module.id)
-    elif not module.topics:
+    elif not module.topics and not _is_presentation_processing(module):
         _replace_generated_topics(db, module, _build_fallback_text(module.title, module.description, module.file_name), [])
         db.refresh(module)
 
     return module
+
+
+def set_learning_topic_image_visibility(
+    request: Request,
+    module_id: int,
+    topic_id: int,
+    image_url: str,
+    hidden: bool,
+    db: Session,
+    current_user: Accounts,
+):
+    """Hide/show one rendered image without changing its topic or ordering."""
+    module = get_teacher_module(request, module_id, db, current_user)
+    topic = next((item for item in module.topics if item.id == topic_id), None)
+    if not topic:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Learning topic not found")
+    if image_url not in _topic_image_urls(topic):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Image does not belong to this topic")
+
+    hidden_urls = list(topic.hidden_image_urls or [])
+    if hidden and image_url not in hidden_urls:
+        hidden_urls.append(image_url)
+    elif not hidden:
+        hidden_urls = [url for url in hidden_urls if url != image_url]
+    topic.hidden_image_urls = hidden_urls
+    db.commit()
+    db.refresh(topic)
+    return topic
 
 
 def update_teacher_module(request: Request, module_id: int, update: TeacherModuleUpdate, db: Session, current_user: Accounts):
@@ -280,23 +317,26 @@ async def replace_teacher_module_file(request: Request, module_id: int, material
     module.file_path = str(saved_path)
     module.file_size = file_size
 
-    try:
-        _process_material_topics(db, module, saved_path, render_presentation=False)
-    except Exception:
-        db.rollback()
-        module.file_name = old_file_name
-        module.file_type = old_file_type
-        module.file_path = old_file_path
-        module.file_size = old_file_size
-        if saved_path.exists():
-            saved_path.unlink()
-        _delete_slide_images(_presentation_slide_urls(module))
-        raise
-    db.commit()
-    db.refresh(module)
-
     if _requires_background_material_processing(saved_path):
+        # Hide the old file's material immediately.  The worker will atomically
+        # replace it with one stable final topic list when conversion finishes.
+        module.material_processing_status = "processing"
+        db.commit()
         _queue_material_topic_regeneration(module.id)
+    else:
+        try:
+            _process_material_topics(db, module, saved_path)
+        except Exception:
+            db.rollback()
+            module.file_name = old_file_name
+            module.file_type = old_file_type
+            module.file_path = old_file_path
+            module.file_size = old_file_size
+            if saved_path.exists():
+                saved_path.unlink()
+            _delete_slide_images(_presentation_slide_urls(module))
+            raise
+    db.refresh(module)
 
     if old_path and old_path.exists() and old_path != saved_path:
         old_path.unlink()
@@ -437,6 +477,22 @@ def _process_material_topics(
         _extract_material_images(source_path),
     )
     return True
+
+
+def _is_presentation_processing(module: TeacherModule) -> bool:
+    return module.material_processing_status == "processing"
+
+
+def _topic_image_urls(topic: LearningTopic) -> list[str]:
+    urls = list(topic.page_image_urls or [])
+    if topic.image_url:
+        urls.append(topic.image_url)
+    try:
+        parsed = json.loads(topic.content or "")
+        urls.extend(parsed.get("image_urls") or []) if isinstance(parsed, dict) else None
+    except (TypeError, ValueError, json.JSONDecodeError):
+        pass
+    return list(dict.fromkeys(url for url in urls if isinstance(url, str)))
 
 
 def _queue_material_topic_regeneration(module_id: int) -> None:
