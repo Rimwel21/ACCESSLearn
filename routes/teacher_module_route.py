@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from sqlalchemy.orm import Session
 from limiter import limiter
 from models.accounts import Accounts
-from schemas.teacher_module_schema import LearningTopicOut, ModuleCheckpointCreate, ModuleCheckpointOut, TeacherModuleCreate, TeacherModuleDetailOut, TeacherModuleOut, TeacherModuleUpdate, TopicSignVideoOut
+from schemas.teacher_module_schema import LearningTopicImageVisibilityUpdate, LearningTopicOut, ModuleCheckpointCreate, ModuleCheckpointOut, TeacherModuleCreate, TeacherModuleDetailOut, TeacherModuleOut, TeacherModuleUpdate, TopicSignVideoOut
 from services.module_checkpoint_service import checkpoint_summary, replace_module_checkpoints
 from services.topic_sign_video_service import delete_topic_sign_video, list_topic_sign_videos, upload_topic_sign_video
 from services.teacher_module_service import (
@@ -14,6 +14,7 @@ from services.teacher_module_service import (
     get_teacher_module,
     list_teacher_modules,
     replace_teacher_module_file,
+    set_learning_topic_image_visibility,
     update_teacher_module,
 )
 from utils.dependencies import get_current_user, get_db
@@ -100,6 +101,21 @@ def get_teacher_module_route(request: Request, module_id: int, db: Session = Dep
 def get_teacher_module_topics_route(request: Request, module_id: int, db: Session = Depends(get_db), current_user: Accounts = Depends(get_current_user)):
     module = get_teacher_module(request=request, module_id=module_id, db=db, current_user=current_user)
     return sorted(module.topics, key=lambda topic: topic.sort_order)
+
+
+@router.patch("/{module_id}/topics/{topic_id}/image-visibility", response_model=LearningTopicOut)
+@limiter.limit("20/minute")
+def set_topic_image_visibility_route(
+    request: Request,
+    module_id: int,
+    topic_id: int,
+    payload: LearningTopicImageVisibilityUpdate,
+    db: Session = Depends(get_db),
+    current_user: Accounts = Depends(get_current_user),
+):
+    return set_learning_topic_image_visibility(
+        request, module_id, topic_id, payload.image_url, payload.hidden, db, current_user,
+    )
 
 
 @router.get("/{module_id}/topics/{topic_id}/sign-videos", response_model=list[TopicSignVideoOut])

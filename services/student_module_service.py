@@ -1,7 +1,9 @@
 from datetime import timedelta
+import json
 from pathlib import Path
 from fastapi import HTTPException, Request, status
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import func
+from sqlalchemy.orm import Session, defer, joinedload
 from models.accounts import Accounts
 from models.assessment_retake_request import AssessmentRetakeRequest
 from models.learning_topic import LearningTopic
@@ -14,7 +16,6 @@ from models.teacher_assessment import TeacherAssessment
 from models.teacher_class import TeacherClass
 from models.teacher_module import TeacherModule
 from services.teacher_module_service import (
-    _ensure_presentation_fallback_topics,
     _needs_material_topic_regeneration,
     _queue_material_topic_regeneration,
 )
@@ -38,7 +39,7 @@ def list_student_modules(request: Request, db: Session, current_user: Accounts):
     modules = (
         db.query(TeacherModule)
         .join(TeacherClass, TeacherClass.id == TeacherModule.class_id)
-        .options(joinedload(TeacherModule.topics), joinedload(TeacherModule.assessments))
+        .options(joinedload(TeacherModule.assessments).defer(TeacherAssessment.questions))
         .filter(
             TeacherModule.status == "Published",
             TeacherClass.grade_level_id == profile.grade_level_id,
@@ -47,8 +48,14 @@ def list_student_modules(request: Request, db: Session, current_user: Accounts):
         .order_by(TeacherModule.created_at.asc())
         .all()
     )
-    _ensure_topics(db, modules)
-    return [_module_to_student_dict(module, db, current_user) for module in modules]
+    module_ids = [module.id for module in modules]
+    topic_counts = dict(
+        db.query(LearningTopic.module_id, func.count(LearningTopic.id))
+        .filter(LearningTopic.module_id.in_(module_ids))
+        .group_by(LearningTopic.module_id)
+        .all()
+    ) if module_ids else {}
+    return [_module_summary_to_student_dict(module, topic_counts.get(module.id, 0), db, current_user) for module in modules]
 
 
 def list_upcoming_deadlines(request: Request, db: Session, current_user: Accounts):
@@ -260,7 +267,10 @@ def get_student_module(request: Request, module_id: int, db: Session, current_us
         "due_at": module.due_at,
         "created_at": module.created_at,
         "updated_at": module.updated_at,
-        "topics": module.topics,
+        # While a PPT/PDF is converting, never expose the old extracted-text
+        # records.  The first content a student receives is the same finalized
+        # slide list the teacher preview receives.
+        "topics": [] if module.material_processing_status == "processing" else [_student_topic_dict(topic) for topic in module.topics],
         "checkpoints": student_module_checkpoints(module, db, current_user),
         "assessments": [_assessment_to_dict(assessment, db, current_user) for assessment in _module_assessments(module, db)],
     }
@@ -386,6 +396,67 @@ def update_topic_progress(request: Request, module_id: int, topic_id: int, statu
             )
         except Exception:
             pass
+
+    db.commit()
+    return get_module_progress(request, module_id, db, current_user)
+
+
+def complete_topic_block(request: Request, module_id: int, topic_ids: list[int], db: Session, current_user: Accounts):
+    """Complete one visible progress block with one database transaction."""
+    _ensure_student(current_user)
+    _ensure_enrolled_module(module_id, db, current_user)
+    requested_ids = list(dict.fromkeys(topic_ids))
+    if not requested_ids or len(requested_ids) > 10:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Choose between 1 and 10 topics")
+
+    topics = (
+        db.query(LearningTopic)
+        .join(TeacherModule, TeacherModule.id == LearningTopic.module_id)
+        .filter(
+            LearningTopic.module_id == module_id,
+            LearningTopic.id.in_(requested_ids),
+            TeacherModule.status == "Published",
+        )
+        .order_by(LearningTopic.sort_order.asc(), LearningTopic.id.asc())
+        .all()
+    )
+    if len(topics) != len(requested_ids):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="One or more topics were not found")
+
+    all_topic_ids = [row.id for row in db.query(LearningTopic.id)
+        .filter(LearningTopic.module_id == module_id)
+        .order_by(LearningTopic.sort_order.asc(), LearningTopic.id.asc())
+        .all()]
+    positions = [all_topic_ids.index(topic.id) for topic in topics]
+    if positions != list(range(positions[0], positions[0] + len(positions))):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Topics must be a consecutive progress block")
+
+    # Verifying the first topic validates the preceding topic and checkpoint.
+    # The remaining requested topics are consecutive and are completed together.
+    _ensure_topic_unlocked(module_id, topics[0].id, db, current_user)
+    existing = {
+        row.topic_id: row
+        for row in db.query(StudentTopicProgress)
+        .filter(
+            StudentTopicProgress.student_id == current_user.id,
+            StudentTopicProgress.module_id == module_id,
+            StudentTopicProgress.topic_id.in_(requested_ids),
+        )
+        .all()
+    }
+    for topic in topics:
+        record = existing.get(topic.id)
+        if record is None:
+            db.add(StudentTopicProgress(
+                student_id=current_user.id,
+                module_id=module_id,
+                topic_id=topic.id,
+                status="completed",
+                completed_at=utc_now(),
+            ))
+        elif record.status != "completed":
+            record.status = "completed"
+            record.completed_at = utc_now()
 
     db.commit()
     return get_module_progress(request, module_id, db, current_user)
@@ -874,7 +945,7 @@ def _module_assessments(module: TeacherModule, db: Session):
     assessments = list(module.assessments or [])
     first_module_id = _first_published_module_id_for_class(module.class_id, db)
     if module.class_id is not None and module.id == first_module_id:
-        class_quizzes = db.query(TeacherAssessment).filter(
+        class_quizzes = db.query(TeacherAssessment).options(defer(TeacherAssessment.questions)).filter(
             TeacherAssessment.assessment_type == "quiz",
             TeacherAssessment.class_id == module.class_id,
             TeacherAssessment.module_id.is_(None),
@@ -904,6 +975,28 @@ def _module_to_student_dict(module: TeacherModule, db: Session, current_user: Ac
         "topics": module.topics,
         "checkpoints": student_module_checkpoints(module, db, current_user),
         "assessments": [_assessment_to_dict(assessment, db, current_user) for assessment in _module_assessments(module, db)],
+    }
+
+
+def _module_summary_to_student_dict(module: TeacherModule, topic_count: int, db: Session, current_user: Accounts):
+    return {
+        "id": module.id,
+        "teacher_id": module.teacher_id,
+        "class_id": module.class_id,
+        "title": module.title,
+        "description": module.description,
+        "content_type": module.content_type,
+        "week": module.week,
+        "file_name": module.file_name,
+        "file_type": module.file_type,
+        "file_size": module.file_size,
+        "status": module.status,
+        "behavior_required": module.behavior_required,
+        "due_at": module.due_at,
+        "created_at": module.created_at,
+        "updated_at": module.updated_at,
+        "topic_count": topic_count,
+        "assessments": [_assessment_summary_to_dict(assessment, db, current_user) for assessment in _module_assessments(module, db)],
     }
 
 
@@ -1007,6 +1100,32 @@ def _assessment_to_dict(assessment: TeacherAssessment, db: Session | None = None
     }
 
 
+def _assessment_summary_to_dict(assessment: TeacherAssessment, db: Session, current_user: Accounts):
+    progress = db.query(StudentQuizProgress).filter(
+        StudentQuizProgress.student_id == current_user.id,
+        StudentQuizProgress.assessment_id == assessment.id,
+    ).first()
+    return {
+        "id": assessment.id,
+        "class_id": assessment.class_id,
+        "module_id": assessment.module_id,
+        "topic_id": assessment.topic_id,
+        "assessment_type": assessment.assessment_type,
+        "title": assessment.title,
+        "description": assessment.description,
+        "category": assessment.category,
+        "week": assessment.week,
+        "time_limit": assessment.time_limit if assessment.assessment_type == "quiz" else None,
+        "time_limit_seconds": assessment.time_limit_seconds if assessment.assessment_type == "quiz" else None,
+        "due_at": assessment.due_at,
+        "student_status": progress.status if progress else None,
+        "student_score": progress.score if progress else None,
+        "student_total": progress.total if progress else None,
+        "student_completed_at": progress.completed_at if progress else None,
+        "student_started_at": progress.started_at if progress else None,
+    }
+
+
 def _string_to_bool(value):
     if isinstance(value, bool):
         return value
@@ -1017,11 +1136,14 @@ def _ensure_topics(db: Session, modules: list[TeacherModule]):
     changed = False
     for module in modules:
         if _needs_material_topic_regeneration(module):
-            if _ensure_presentation_fallback_topics(db, module):
+            if module.material_processing_status != "processing":
+                module.material_processing_status = "processing"
                 changed = True
-            # File conversion can be expensive. Let the student keep using the
-            # page while a single background job prepares rendered content.
+            # File conversion can be expensive, but temporary extraction output
+            # must not be shown as student material because it later changes.
             _queue_material_topic_regeneration(module.id)
+        if module.material_processing_status == "processing":
+            continue
         if module.topics:
             continue
         module.topics.append(LearningTopic(
@@ -1033,3 +1155,41 @@ def _ensure_topics(db: Session, modules: list[TeacherModule]):
         changed = True
     if changed:
         db.commit()
+
+
+def _student_topic_dict(topic: LearningTopic) -> dict:
+    """Return topic content with teacher-hidden images removed for students."""
+    hidden_urls = set(topic.hidden_image_urls or [])
+    page_urls = [url for url in (topic.page_image_urls or []) if url not in hidden_urls]
+    image_url = topic.image_url if topic.image_url not in hidden_urls else None
+    content = topic.content
+    structured_image_urls: list[str] = []
+    try:
+        parsed = json.loads(content or "")
+        if isinstance(parsed, dict) and isinstance(parsed.get("image_urls"), list):
+            structured_image_urls = list(parsed["image_urls"])
+            parsed["image_urls"] = [url for url in parsed["image_urls"] if url not in hidden_urls]
+            content = json.dumps(parsed)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        pass
+    original_images = [*(topic.page_image_urls or []), *structured_image_urls]
+    has_visible_images = bool(page_urls) or bool(image_url)
+    has_meaningful_text = bool(content.strip()) and content.strip().lower() not in {
+        topic.title.strip().lower(),
+        f"slide {topic.sort_order}".lower(),
+    }
+    # A rendered presentation page normally has a generic title and one image.
+    # Once that image is hidden, do not leave students an empty slide container.
+    student_visible = not (original_images and not has_visible_images and not has_meaningful_text)
+    return {
+        "id": topic.id,
+        "module_id": topic.module_id,
+        "title": topic.title,
+        "description": topic.description,
+        "content": content,
+        "image_url": image_url,
+        "page_image_urls": page_urls,
+        "student_visible": student_visible,
+        "sort_order": topic.sort_order,
+        "sign_videos": topic.sign_videos,
+    }

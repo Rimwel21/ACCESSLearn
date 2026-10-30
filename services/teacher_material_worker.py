@@ -24,8 +24,10 @@ def process_material(module_id: int) -> None:
             .filter(TeacherModule.id == module_id)
             .first()
         )
-        if module and _needs_material_topic_regeneration(module):
+        if module and (module.material_processing_status == "processing" or _needs_material_topic_regeneration(module)):
             _process_material_topics(db, module, Path(module.file_path))
+            module.material_processing_status = "ready"
+            db.commit()
     except Exception:
         logger.exception("Background material processing failed for module %s", module_id)
         raise

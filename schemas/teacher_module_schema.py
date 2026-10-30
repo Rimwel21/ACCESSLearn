@@ -67,6 +67,7 @@ class TeacherModuleOut(TeacherModuleBase):
     teacher_id: int
     created_at: datetime
     updated_at: datetime
+    material_processing_status: str = "ready"
 
     class Config:
         from_attributes = True
@@ -80,11 +81,18 @@ class LearningTopicOut(BaseModel):
     content: str
     image_url: str | None = None
     page_image_urls: list[str] = []
+    hidden_image_urls: list[str] = []
+    student_visible: bool = True
     sort_order: int
     sign_videos: list["TopicSignVideoOut"] = []
 
     class Config:
         from_attributes = True
+
+
+class LearningTopicImageVisibilityUpdate(BaseModel):
+    image_url: str = Field(min_length=1, max_length=500)
+    hidden: bool
 
 
 class TopicSignVideoOut(BaseModel):
@@ -120,6 +128,33 @@ class TeacherModuleDetailOut(TeacherModuleOut):
     topics: list[LearningTopicOut] = []
     checkpoints: list[ModuleCheckpointOut] = []
     assessments: list[TeacherAssessmentOut] = []
+
+
+class StudentAssessmentSummaryOut(BaseModel):
+    id: int
+    class_id: int | None = None
+    module_id: int | None = None
+    topic_id: int | None = None
+    assessment_type: str
+    title: str
+    description: str
+    category: str | None = None
+    week: str | None = None
+    time_limit: str | None = None
+    time_limit_seconds: int | None = None
+    due_at: datetime | None = None
+    student_status: str | None = None
+    student_score: int | None = None
+    student_total: int | None = None
+    student_completed_at: datetime | None = None
+    student_started_at: datetime | None = None
+
+
+class StudentModuleSummaryOut(TeacherModuleOut):
+    """Compact material data for student lists; slide content loads only when opened."""
+
+    topic_count: int = 0
+    assessments: list[StudentAssessmentSummaryOut] = []
 
 
 class StudentProgressOut(BaseModel):

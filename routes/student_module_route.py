@@ -3,13 +3,14 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from limiter import limiter
 from models.accounts import Accounts
-from schemas.teacher_module_schema import StudentDeadlineOut, StudentProgressOut, TeacherModuleDetailOut
+from schemas.teacher_module_schema import StudentDeadlineOut, StudentModuleSummaryOut, StudentProgressOut, TeacherModuleDetailOut
 from schemas.teacher_assessment_schema import TeacherAssessmentOut
 from services.module_checkpoint_service import submit_checkpoint
 from services.student_module_service import (
     get_student_activity,
     get_module_progress,
     get_student_module,
+    complete_topic_block,
     list_upcoming_deadlines,
     list_student_activities,
     list_student_modules,
@@ -26,6 +27,10 @@ from utils.dependencies import get_current_user, get_db
 
 class ProgressUpdate(BaseModel):
     status: str
+
+
+class TopicBlockProgressUpdate(BaseModel):
+    topic_ids: list[int]
 
 
 class QuizSubmit(BaseModel):
@@ -89,7 +94,7 @@ def request_activity_retake_route(
     )
 
 
-@router.get("/", response_model=list[TeacherModuleDetailOut])
+@router.get("/", response_model=list[StudentModuleSummaryOut])
 @limiter.limit("20/minute")
 def list_student_modules_route(request: Request, db: Session = Depends(get_db), current_user: Accounts = Depends(get_current_user)):
     return list_student_modules(request=request, db=db, current_user=current_user)
@@ -117,6 +122,18 @@ def get_student_module_route(request: Request, module_id: int, db: Session = Dep
 @limiter.limit("30/minute")
 def get_module_progress_route(request: Request, module_id: int, db: Session = Depends(get_db), current_user: Accounts = Depends(get_current_user)):
     return get_module_progress(request=request, module_id=module_id, db=db, current_user=current_user)
+
+
+@router.post("/{module_id}/topics/complete-block", response_model=StudentProgressOut)
+@limiter.limit("30/minute")
+def complete_topic_block_route(
+    request: Request,
+    module_id: int,
+    payload: TopicBlockProgressUpdate,
+    db: Session = Depends(get_db),
+    current_user: Accounts = Depends(get_current_user),
+):
+    return complete_topic_block(request, module_id, payload.topic_ids, db, current_user)
 
 
 @router.post("/{module_id}/topics/{topic_id}/progress", response_model=StudentProgressOut)
