@@ -54,6 +54,7 @@ def create_remediation_activity(payload: RemediationActivityCreate, db: Session,
                 raise HTTPException(status_code=422, detail="The selected checkpoint does not match the topic range.")
 
         _validate_hearing_impaired_targets(module, item.student_ids, db)
+        _validate_targets_missed_selected_questions(item, checkpoint, db)
         questions = _stored_questions(item, checkpoint, db)
         intervention = RemediationIntervention(
             remediation_activity_id=activity.id,
@@ -220,6 +221,43 @@ def _validate_hearing_impaired_targets(module: TeacherModule, student_ids: list[
     ).all()
     if {row.account_id for row in rows} != set(student_ids):
         raise HTTPException(status_code=422, detail="Support activities can only target hearing-impaired students assigned to this class.")
+
+
+def _validate_targets_missed_selected_questions(item, checkpoint: ModuleCheckpoint | None, db: Session) -> None:
+    """Each target must have missed at least one question included in support."""
+    if checkpoint is None:
+        return
+    selected_indexes = {
+        question.source_question_index
+        for question in item.questions
+        if question.prompt_type == "sign_video" and question.source_question_index is not None
+    }
+    if not selected_indexes:
+        return
+    attempts = {
+        attempt.student_id: attempt
+        for attempt in db.query(StudentCheckpointAttempt).filter(
+            StudentCheckpointAttempt.checkpoint_id == checkpoint.id,
+            StudentCheckpointAttempt.student_id.in_(item.student_ids),
+        ).all()
+    }
+    source_questions = checkpoint.questions or []
+    for student_id in item.student_ids:
+        attempt = attempts.get(student_id)
+        missed_selected_question = bool(attempt) and any(
+            index < len(source_questions)
+            and source_questions[index].get("answer")
+            and not answers_match(
+                str((attempt.answers or {}).get(str(index), (attempt.answers or {}).get(index, ""))),
+                str(source_questions[index]["answer"]),
+            )
+            for index in selected_indexes
+        )
+        if not missed_selected_question:
+            raise HTTPException(
+                status_code=422,
+                detail="Each targeted student must have missed at least one selected checkpoint question.",
+            )
 
 
 def _teacher_activity_dict(activity: RemediationActivity, db: Session) -> dict:

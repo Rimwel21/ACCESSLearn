@@ -12,7 +12,7 @@ from models.learning_topic import LearningTopic
 from models.teacher_module import TeacherModule
 from schemas.teacher_module_schema import ModuleCheckpointCreate
 from services.push_notification_service import send_push_to_accounts
-from utils.enum import NotificationCategoryEnum, NotificationPriorityEnum, RoleEnum
+from utils.enum import NotificationCategoryEnum, NotificationPriorityEnum, RoleEnum, StudentType
 from utils.handsign.science_vocabulary import answers_match
 from utils.utc_now import utc_now
 
@@ -143,12 +143,16 @@ def checkpoint_summary(request: Request, module_id: int, db: Session, current_us
                 "student_name": student.name,
                 "score": attempt.score,
                 "total": attempt.total,
-                "struggling": attempt.total > 0 and attempt.score < 3,
                 "completed_at": attempt.completed_at,
                 "missed_question_indexes": _missed_question_indexes(checkpoint.questions or [], attempt.answers or {}),
             }
             for attempt, student in rows
+            if student.student_type == StudentType.HI
         ]
+        for attempt in attempts:
+            # A student who missed even one question is a useful suggested
+            # target for question-specific support; a 4/5 score still matters.
+            attempt["struggling"] = bool(attempt["missed_question_indexes"])
         results.append({
             **_checkpoint_dict(checkpoint),
             "attempts": attempts,
