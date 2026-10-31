@@ -112,7 +112,7 @@ def set_topic_image_visibility_route(
     topic_id: int,
     payload: LearningTopicImageVisibilityUpdate,
     db: Session = Depends(get_db),
-    current_user: Accounts = Depends(get_current_user),
+    current_user: Accounts = Depends(require_teacher),
 ):
     return set_learning_topic_image_visibility(
         request, module_id, topic_id, payload.image_url, payload.hidden, db, current_user,
