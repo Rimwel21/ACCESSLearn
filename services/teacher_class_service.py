@@ -5,6 +5,9 @@ from sqlalchemy.orm import Session, joinedload
 from models.accounts import Accounts
 from models.handsign_tutorial_practice import HandsignTutorialPractice
 from models.learning_topic import LearningTopic
+from models.remediation_activity import RemediationActivity
+from models.remediation_intervention import RemediationIntervention
+from models.remediation_target import RemediationTarget
 from models.student_progress import StudentTopicProgress
 from models.student_profile import StudentProfile
 from models.student_quiz_progress import StudentQuizProgress
@@ -568,6 +571,45 @@ def list_teacher_student_records(
         .filter(TeacherModule.teacher_id == current_user.id, TeacherModule.class_id.in_(class_ids))
         .all()
     ]
+    material_modules = (
+        db.query(TeacherModule)
+        .filter(
+            TeacherModule.teacher_id == current_user.id,
+            TeacherModule.class_id.in_(class_ids),
+            TeacherModule.status == 'Published',
+        )
+        .order_by(TeacherModule.created_at.desc())
+        .all()
+    )
+    material_modules_by_class: dict[int, list[TeacherModule]] = {}
+    for module in material_modules:
+        if module.class_id is not None:
+            material_modules_by_class.setdefault(module.class_id, []).append(module)
+
+    material_module_ids = [module.id for module in material_modules]
+    material_topics = (
+        db.query(LearningTopic)
+        .filter(LearningTopic.module_id.in_(material_module_ids))
+        .order_by(LearningTopic.sort_order.asc())
+        .all()
+    ) if material_module_ids else []
+    material_topics_by_module: dict[int, list[LearningTopic]] = {}
+    for topic in material_topics:
+        material_topics_by_module.setdefault(topic.module_id, []).append(topic)
+
+    material_topic_ids = [topic.id for topic in material_topics]
+    material_progress_rows = (
+        db.query(StudentTopicProgress)
+        .filter(
+            StudentTopicProgress.student_id.in_(student_ids),
+            StudentTopicProgress.topic_id.in_(material_topic_ids),
+        )
+        .all()
+    ) if material_topic_ids else []
+    material_progress_by_student_topic = {
+        (progress.student_id, progress.topic_id): progress
+        for progress in material_progress_rows
+    }
     assessment_filters = [TeacherAssessment.teacher_id == current_user.id]
     activity_filter = (
         (TeacherAssessment.assessment_type == 'activity')
@@ -621,6 +663,27 @@ def list_teacher_student_records(
     for practice in handsign_rows:
         handsign_by_student.setdefault(practice.student_id, []).append(practice)
 
+    targeted_support_rows = (
+        db.query(RemediationTarget, RemediationIntervention, RemediationActivity)
+        .join(
+            RemediationIntervention,
+            RemediationTarget.intervention_id == RemediationIntervention.id,
+        )
+        .join(
+            RemediationActivity,
+            RemediationIntervention.remediation_activity_id == RemediationActivity.id,
+        )
+        .filter(
+            RemediationTarget.student_id.in_(student_ids),
+            RemediationActivity.teacher_id == current_user.id,
+        )
+        .order_by(RemediationTarget.updated_at.desc())
+        .all()
+    )
+    targeted_support_by_student: dict[int, list[tuple[RemediationTarget, RemediationIntervention, RemediationActivity]]] = {}
+    for target, intervention, activity in targeted_support_rows:
+        targeted_support_by_student.setdefault(target.student_id, []).append((target, intervention, activity))
+
     retake_rows = []
     if assessment_ids and student_ids:
         retake_rows = (
@@ -642,6 +705,42 @@ def list_teacher_student_records(
     records = []
     for student in students:
         summary = _dashboard_progress_for_student(student, classes, db, current_user)
+        matching_class_ids = {
+            teacher_class.id
+            for teacher_class in classes
+            if teacher_class.grade_level_id == student.grade_level_id
+            and teacher_class.section_id == student.section_id
+        }
+        material_records = []
+        for matching_class_id in matching_class_ids:
+            for module in material_modules_by_class.get(matching_class_id, []):
+                topics = material_topics_by_module.get(module.id, [])
+                progress_items = [
+                    material_progress_by_student_topic[(student.account_id, topic.id)]
+                    for topic in topics
+                    if (student.account_id, topic.id) in material_progress_by_student_topic
+                ]
+                completed_topics = sum(item.status == 'completed' for item in progress_items)
+                total_topics = len(topics)
+                if total_topics and completed_topics == total_topics:
+                    material_status = 'completed'
+                elif progress_items:
+                    material_status = 'in_progress'
+                else:
+                    material_status = 'not_started'
+                last_updated = max(
+                    (item.updated_at or item.completed_at or item.started_at for item in progress_items),
+                    default=None,
+                )
+                material_records.append({
+                    'id': module.id,
+                    'title': module.title,
+                    'completed_topics': completed_topics,
+                    'total_topics': total_topics,
+                    'percent': round(completed_topics / total_topics * 100) if total_topics else 0,
+                    'status': material_status,
+                    'last_updated': last_updated,
+                })
         assessment_records = []
         for progress in sorted(progress_by_student.get(student.account_id, []), key=lambda item: item.updated_at or item.completed_at or utc_now(), reverse=True):
             assessment = assessments_by_id.get(progress.assessment_id)
@@ -685,12 +784,30 @@ def list_teacher_student_records(
                 'completed_at': practice.completed_at,
             })
 
+        targeted_support_records = [
+            {
+                'id': target.id,
+                'activity_title': activity.title,
+                'intervention_title': intervention.title,
+                'start_sort_order': intervention.start_sort_order,
+                'end_sort_order': intervention.end_sort_order,
+                'status': target.status,
+                'score': target.score,
+                'total': target.total,
+                'due_at': activity.due_at,
+                'completed_at': target.completed_at,
+            }
+            for target, intervention, activity in targeted_support_by_student.get(student.account_id, [])
+        ]
+
         records.append({
             **summary,
             'grade_level': student.grade_level.name if student.grade_level else None,
             'section': student.section.name if student.section else None,
             'assessments': assessment_records,
             'handsign_practice': handsign_records,
+            'learning_materials': material_records,
+            'targeted_support': targeted_support_records,
         })
 
     return records
