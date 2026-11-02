@@ -1,6 +1,7 @@
 from fastapi import HTTPException, Request, status
 import re
-from sqlalchemy.orm import Session
+from datetime import timedelta
+from sqlalchemy.orm import Session, joinedload
 from models.accounts import Accounts
 from models.assessment_retake_request import AssessmentRetakeRequest
 from models.learning_topic import LearningTopic
@@ -40,6 +41,140 @@ def list_teacher_assessments(request: Request, assessment_type: str, db: Session
     if assessment_type == "activity":
         return [_assessment_with_submissions(assessment, db) for assessment in assessments]
     return assessments
+
+
+def get_activity_progress(request: Request, assessment_id: int, db: Session, current_user: Accounts):
+    """Return one complete class roster joined to the activity's saved progress."""
+    _ensure_teacher(current_user)
+    assessment = db.query(TeacherAssessment).filter(
+        TeacherAssessment.id == assessment_id,
+        TeacherAssessment.teacher_id == current_user.id,
+        TeacherAssessment.assessment_type == "activity",
+    ).first()
+    if not assessment or assessment.class_id is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Activity not found")
+
+    teacher_class = db.query(TeacherClass).options(
+        joinedload(TeacherClass.grade_levels),
+        joinedload(TeacherClass.sections),
+    ).filter(
+        TeacherClass.id == assessment.class_id,
+        TeacherClass.teacher_id == current_user.id,
+    ).first()
+    if not teacher_class:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Class not found")
+
+    students = db.query(StudentProfile).join(Accounts, Accounts.id == StudentProfile.account_id).filter(
+        StudentProfile.grade_level_id == teacher_class.grade_level_id,
+        StudentProfile.section_id == teacher_class.section_id,
+        Accounts.role == RoleEnum.student,
+    ).order_by(StudentProfile.name.asc()).all()
+    student_ids = [student.account_id for student in students]
+    progress_rows = db.query(StudentQuizProgress).filter(
+        StudentQuizProgress.assessment_id == assessment.id,
+        StudentQuizProgress.student_id.in_(student_ids),
+    ).all() if student_ids else []
+    progress_by_student = {progress.student_id: progress for progress in progress_rows}
+
+    now = utc_now()
+    total_questions = len(assessment.questions or [])
+    rows = []
+    summary = {
+        "total_students": len(students),
+        "not_started": 0,
+        "in_progress": 0,
+        "draft_complete": 0,
+        "submitted": 0,
+        "missing": 0,
+        "late": 0,
+        "graded": 0,
+    }
+    for student in students:
+        progress = progress_by_student.get(student.account_id)
+        answers = _valid_activity_answers(assessment, progress.answers if progress else {})
+        answered_count = len(answers)
+        submitted = bool(progress and progress.status == "completed")
+        late = bool(submitted and assessment.due_at and _datetime_after(progress.completed_at, assessment.due_at))
+        deadline_passed = bool(assessment.due_at and _datetime_after(now, assessment.due_at))
+
+        if submitted:
+            row_status = "late" if late else "submitted"
+            summary["submitted"] += 1
+            if late:
+                summary["late"] += 1
+        elif progress and progress.status == "missing":
+            row_status = "missing"
+            summary["missing"] += 1
+        elif deadline_passed:
+            row_status = "missing"
+            summary["missing"] += 1
+        elif not progress:
+            row_status = "not_started"
+            summary["not_started"] += 1
+        elif total_questions and answered_count == total_questions:
+            row_status = "draft_complete"
+            summary["draft_complete"] += 1
+        else:
+            row_status = "in_progress"
+            summary["in_progress"] += 1
+
+        recently_active = bool(
+            progress
+            and not submitted
+            and progress.updated_at
+            and not _datetime_after(now - timedelta(minutes=5), progress.updated_at)
+        )
+        rows.append({
+            "student_id": student.account_id,
+            "student_name": student.name,
+            "status": row_status,
+            "answered_count": answered_count,
+            "unanswered_count": max(total_questions - answered_count, 0),
+            "total_questions": total_questions,
+            "progress_percent": round(answered_count / total_questions * 100) if total_questions else 0,
+            "last_saved_at": progress.updated_at if progress else None,
+            "submitted": submitted,
+            "submitted_at": progress.completed_at if submitted else None,
+            "is_currently_working": recently_active,
+            "answers": answers,
+        })
+
+    started = summary["total_students"] - summary["not_started"]
+    summary["started"] = started
+    summary["started_percent"] = round(started / summary["total_students"] * 100) if summary["total_students"] else 0
+    summary["submitted_percent"] = round(summary["submitted"] / summary["total_students"] * 100) if summary["total_students"] else 0
+    return {
+        "activity_id": assessment.id,
+        "activity_title": assessment.title,
+        "class_id": teacher_class.id,
+        "class_name": teacher_class.class_name,
+        "grade_level": teacher_class.grade_levels.name if teacher_class.grade_levels else None,
+        "section": teacher_class.sections.name if teacher_class.sections else None,
+        "due_at": assessment.due_at,
+        "summary": summary,
+        "students": rows,
+    }
+
+
+def _valid_activity_answers(assessment: TeacherAssessment, answers: dict | None) -> dict[str, str]:
+    cleaned: dict[str, str] = {}
+    for index in range(len(assessment.questions or [])):
+        value = (answers or {}).get(str(index))
+        if value is None:
+            value = (answers or {}).get(index)
+        if isinstance(value, str) and value.strip():
+            cleaned[str(index)] = value.strip()
+    return cleaned
+
+
+def _datetime_after(left, right) -> bool:
+    if left is None or right is None:
+        return False
+    if left.tzinfo is None and right.tzinfo is not None:
+        right = right.replace(tzinfo=None)
+    elif left.tzinfo is not None and right.tzinfo is None:
+        left = left.replace(tzinfo=None)
+    return left > right
 
 
 def create_teacher_assessment(request: Request, assessment: TeacherAssessmentCreate, db: Session, current_user: Accounts):

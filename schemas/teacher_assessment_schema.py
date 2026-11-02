@@ -104,6 +104,10 @@ class TeacherAssessmentOut(TeacherAssessmentBase):
     student_remaining_seconds: int | None = None
     student_submission_type: str | None = None
     student_answers: dict = Field(default_factory=dict)
+    student_answered_count: int = 0
+    student_progress_percent: int = 0
+    student_progress_status: str = "not_started"
+    student_last_saved_at: datetime | None = None
     student_retake_eligible: bool = False
     student_retake_reason: str | None = None
     student_retake_status: str | None = None
@@ -114,3 +118,54 @@ class TeacherAssessmentOut(TeacherAssessmentBase):
 
     class Config:
         from_attributes = True
+
+
+class ActivityDraftOut(BaseModel):
+    activity_id: int
+    status: str
+    answered_count: int
+    total_questions: int
+    progress_percent: int
+    last_saved_at: datetime
+    submitted: bool = False
+
+
+class ActivityProgressStudentOut(BaseModel):
+    student_id: int
+    student_name: str
+    status: str
+    answered_count: int
+    unanswered_count: int
+    total_questions: int
+    progress_percent: int
+    last_saved_at: datetime | None = None
+    submitted: bool
+    submitted_at: datetime | None = None
+    is_currently_working: bool = False
+    answers: dict = Field(default_factory=dict)
+
+
+class ActivityProgressSummaryOut(BaseModel):
+    total_students: int
+    not_started: int
+    in_progress: int
+    draft_complete: int
+    submitted: int
+    missing: int
+    late: int
+    graded: int = 0
+    started: int
+    started_percent: int
+    submitted_percent: int
+
+
+class ActivityProgressOut(BaseModel):
+    activity_id: int
+    activity_title: str
+    class_id: int
+    class_name: str
+    grade_level: str | None = None
+    section: str | None = None
+    due_at: datetime | None = None
+    summary: ActivityProgressSummaryOut
+    students: list[ActivityProgressStudentOut] = Field(default_factory=list)

@@ -185,7 +185,60 @@ def get_student_activity(request: Request, activity_id: int, db: Session, curren
     )
     if not activity:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Activity not found")
+    progress = db.query(StudentQuizProgress).filter(
+        StudentQuizProgress.student_id == current_user.id,
+        StudentQuizProgress.assessment_id == activity.id,
+    ).first()
+    if not progress and (not _is_past_due(activity.due_at) or _has_approved_retake(activity, db, current_user)):
+        progress = StudentQuizProgress(
+            student_id=current_user.id,
+            module_id=None,
+            assessment_id=activity.id,
+            status="in_progress",
+            answers={},
+            total=len(activity.questions or []),
+            started_at=utc_now(),
+        )
+        db.add(progress)
+        db.commit()
     return _assessment_to_dict(activity, db, current_user)
+
+
+def save_activity_draft(request: Request, activity_id: int, answers: dict, db: Session, current_user: Accounts):
+    _ensure_student(current_user)
+    get_student_activity(request, activity_id, db, current_user)
+    assessment = db.query(TeacherAssessment).filter(
+        TeacherAssessment.id == activity_id,
+        TeacherAssessment.assessment_type == "activity",
+    ).first()
+    if not assessment:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Activity not found")
+    _ensure_assessment_open_for_student(assessment, db, current_user)
+
+    progress = _get_or_create_assessment_progress(current_user.id, None, activity_id, db)
+    if progress.status == "completed":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Activity already submitted")
+
+    cleaned_answers = _clean_activity_answers(assessment, answers)
+    progress.status = "in_progress"
+    progress.answers = cleaned_answers
+    progress.total = len(assessment.questions or [])
+    progress.started_at = progress.started_at or utc_now()
+    progress.updated_at = utc_now()
+    db.commit()
+    db.refresh(progress)
+
+    answered_count = _answered_question_count(assessment, cleaned_answers)
+    total_questions = len(assessment.questions or [])
+    return {
+        "activity_id": activity_id,
+        "status": "draft_complete" if total_questions and answered_count == total_questions else "in_progress",
+        "answered_count": answered_count,
+        "total_questions": total_questions,
+        "progress_percent": round(answered_count / total_questions * 100) if total_questions else 0,
+        "last_saved_at": progress.updated_at,
+        "submitted": False,
+    }
 
 
 def request_assessment_retake(
@@ -1074,6 +1127,22 @@ def _normalize_answer(value: str):
     return " ".join(value.strip().lower().split())
 
 
+def _clean_activity_answers(assessment: TeacherAssessment, answers: dict | None) -> dict[str, str]:
+    total_questions = len(assessment.questions or [])
+    cleaned: dict[str, str] = {}
+    for index in range(total_questions):
+        value = (answers or {}).get(str(index))
+        if value is None:
+            value = (answers or {}).get(index)
+        if isinstance(value, str) and value.strip():
+            cleaned[str(index)] = value.strip()
+    return cleaned
+
+
+def _answered_question_count(assessment: TeacherAssessment, answers: dict | None) -> int:
+    return len(_clean_activity_answers(assessment, answers))
+
+
 def _assessment_to_dict(assessment: TeacherAssessment, db: Session | None = None, current_user: Accounts | None = None):
     progress = None
     if db is not None and current_user is not None:
@@ -1081,6 +1150,14 @@ def _assessment_to_dict(assessment: TeacherAssessment, db: Session | None = None
             StudentQuizProgress.student_id == current_user.id,
             StudentQuizProgress.assessment_id == assessment.id,
         ).first()
+
+    total_questions = len(assessment.questions or [])
+    answered_count = _answered_question_count(assessment, progress.answers if progress else {})
+    progress_status = "not_started"
+    if progress:
+        progress_status = "submitted" if progress.status == "completed" else (
+            "draft_complete" if total_questions and answered_count == total_questions else "in_progress"
+        )
 
     return {
         "id": assessment.id,
@@ -1110,6 +1187,10 @@ def _assessment_to_dict(assessment: TeacherAssessment, db: Session | None = None
         "student_remaining_seconds": _remaining_seconds(progress) if progress and progress.status != "completed" else None,
         "student_submission_type": progress.submission_type if progress else None,
         "student_answers": progress.answers if progress else {},
+        "student_answered_count": answered_count,
+        "student_progress_percent": round(answered_count / total_questions * 100) if total_questions else 0,
+        "student_progress_status": progress_status,
+        "student_last_saved_at": progress.updated_at if progress else None,
         **_retake_info(assessment, db, current_user),
         "created_at": assessment.created_at,
         "updated_at": assessment.updated_at,

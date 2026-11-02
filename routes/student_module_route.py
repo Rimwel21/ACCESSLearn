@@ -15,6 +15,7 @@ from services.student_module_service import (
     list_student_activities,
     list_student_modules,
     request_assessment_retake,
+    save_activity_draft,
     save_quiz_answers,
     start_quiz_progress,
     submit_assessment_progress,
@@ -72,6 +73,24 @@ def submit_student_activity_route(
     current_user: Accounts = Depends(get_current_user),
 ):
     return submit_class_activity_progress(
+        request=request,
+        activity_id=activity_id,
+        answers=payload.answers,
+        db=db,
+        current_user=current_user,
+    )
+
+
+@activities_router.post("/{activity_id}/draft")
+@limiter.limit("60/minute")
+def save_student_activity_draft_route(
+    request: Request,
+    activity_id: int,
+    payload: QuizSubmit,
+    db: Session = Depends(get_db),
+    current_user: Accounts = Depends(get_current_user),
+):
+    return save_activity_draft(
         request=request,
         activity_id=activity_id,
         answers=payload.answers,

@@ -1,6 +1,7 @@
 import unittest
 from datetime import timedelta
 
+from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -21,9 +22,11 @@ from models.teacher_module import TeacherModule
 from services.student_module_service import (
     _complete_assessment_progress,
     _visible_topic_ids,
+    get_student_activity,
+    save_activity_draft,
     update_topic_progress,
 )
-from services.teacher_assessment_service import _reset_progress_for_retake
+from services.teacher_assessment_service import _reset_progress_for_retake, get_activity_progress
 from services.teacher_class_service import (
     _dashboard_progress_for_student,
     list_teacher_student_records,
@@ -309,6 +312,152 @@ class ProgressMonitoringTests(unittest.TestCase):
             ).count(),
             1,
         )
+
+    def test_activity_draft_is_restored_and_isolated_per_student(self):
+        opened = get_student_activity(None, self.activity.id, self.db, self.student_account)
+        self.assertEqual(opened["student_progress_status"], "in_progress")
+
+        saved = save_activity_draft(
+            None,
+            self.activity.id,
+            {"0": "A", "99": "ignored"},
+            self.db,
+            self.student_account,
+        )
+        self.assertEqual(saved["answered_count"], 1)
+        self.assertEqual(saved["progress_percent"], 50)
+
+        restored = get_student_activity(None, self.activity.id, self.db, self.student_account)
+        self.assertEqual(restored["student_answers"], {"0": "A"})
+        self.assertEqual(restored["student_progress_status"], "in_progress")
+
+        other_student = get_student_activity(None, self.activity.id, self.db, self.new_account)
+        self.assertEqual(other_student["student_answers"], {})
+        self.assertEqual(
+            self.db.query(StudentQuizProgress).filter_by(assessment_id=self.activity.id).count(),
+            2,
+        )
+
+        complete_draft = save_activity_draft(
+            None,
+            self.activity.id,
+            {"0": "A", "1": "A"},
+            self.db,
+            self.student_account,
+        )
+        self.assertEqual(complete_draft["status"], "draft_complete")
+        progress = self.db.query(StudentQuizProgress).filter_by(
+            student_id=self.student_account.id,
+            assessment_id=self.activity.id,
+        ).one()
+        self.assertEqual(progress.status, "in_progress")
+        self.assertIsNone(progress.completed_at)
+
+    def test_activity_monitoring_returns_complete_35_student_roster(self):
+        accounts = [self.student_account, self.new_account]
+        for index in range(3, 36):
+            account, _ = self._student(f"Learner {index:02d}", f"learner{index}", self.section)
+            accounts.append(account)
+        self.db.flush()
+
+        for index, account in enumerate(accounts):
+            if index < 5:
+                continue
+            if index < 15:
+                answers = {"0": "A"}
+                status_value = "in_progress"
+            elif index < 20:
+                answers = {"0": "A", "1": "A"}
+                status_value = "in_progress"
+            elif index < 32:
+                answers = {"0": "A", "1": "A"}
+                status_value = "completed"
+            else:
+                answers = {}
+                status_value = "missing"
+            self.db.add(StudentQuizProgress(
+                student_id=account.id,
+                assessment_id=self.activity.id,
+                status=status_value,
+                answers=answers,
+                total=2,
+                started_at=utc_now(),
+                completed_at=utc_now() if status_value == "completed" else None,
+            ))
+        self.db.commit()
+
+        result = get_activity_progress(None, self.activity.id, self.db, self.teacher)
+        self.assertEqual(len(result["students"]), 35)
+        self.assertEqual(result["summary"]["total_students"], 35)
+        self.assertEqual(result["summary"]["not_started"], 5)
+        self.assertEqual(result["summary"]["in_progress"], 10)
+        self.assertEqual(result["summary"]["draft_complete"], 5)
+        self.assertEqual(result["summary"]["submitted"], 12)
+        self.assertEqual(result["summary"]["missing"], 3)
+        category_total = sum(result["summary"][key] for key in (
+            "not_started", "in_progress", "draft_complete", "submitted", "missing",
+        ))
+        self.assertEqual(category_total, 35)
+
+        with self.assertRaises(HTTPException) as denied:
+            get_activity_progress(None, self.activity.id, self.db, self.other_teacher)
+        self.assertEqual(denied.exception.status_code, 404)
+
+    def test_activity_progress_percentages_cover_zero_through_one_hundred(self):
+        activity = TeacherAssessment(
+            teacher_id=self.teacher.id,
+            class_id=self.teacher_class.id,
+            assessment_type="activity",
+            title="Ten Question Activity",
+            description="Progress levels",
+            questions=[{"prompt": f"Q{index}", "answer": "A"} for index in range(10)],
+            due_at=utc_now() + timedelta(days=1),
+        )
+        self.db.add(activity)
+        accounts = [self.student_account, self.new_account]
+        for index in range(3, 12):
+            account, _ = self._student(f"Percent {index}", f"percent{index}", self.section)
+            accounts.append(account)
+        self.db.flush()
+        for answered_count, account in enumerate(accounts):
+            if answered_count == 0:
+                continue
+            self.db.add(StudentQuizProgress(
+                student_id=account.id,
+                assessment_id=activity.id,
+                status="in_progress",
+                answers={str(index): "A" for index in range(answered_count)},
+                total=10,
+                started_at=utc_now(),
+            ))
+        self.db.commit()
+
+        result = get_activity_progress(None, activity.id, self.db, self.teacher)
+        percentages = sorted(row["progress_percent"] for row in result["students"])
+        self.assertEqual(percentages, list(range(0, 101, 10)))
+        self.assertEqual(next(row for row in result["students"] if row["progress_percent"] == 100)["status"], "draft_complete")
+
+    def test_deadline_marks_unsubmitted_missing_and_late_submission_late(self):
+        self.activity.due_at = utc_now() - timedelta(hours=1)
+        self.db.add(StudentQuizProgress(
+            student_id=self.student_account.id,
+            assessment_id=self.activity.id,
+            status="completed",
+            answers={"0": "A", "1": "A"},
+            score=2,
+            total=2,
+            started_at=utc_now() - timedelta(hours=2),
+            completed_at=utc_now(),
+        ))
+        self.db.commit()
+
+        result = get_activity_progress(None, self.activity.id, self.db, self.teacher)
+        statuses = {row["student_name"]: row["status"] for row in result["students"]}
+        self.assertEqual(statuses["Learner One"], "late")
+        self.assertEqual(statuses["New Learner"], "missing")
+        self.assertEqual(result["summary"]["submitted"], 1)
+        self.assertEqual(result["summary"]["late"], 1)
+        self.assertEqual(result["summary"]["missing"], 1)
 
 
 if __name__ == "__main__":

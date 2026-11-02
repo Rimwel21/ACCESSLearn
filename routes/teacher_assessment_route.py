@@ -3,11 +3,12 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from limiter import limiter
 from models.accounts import Accounts
-from schemas.teacher_assessment_schema import TeacherActivityWeekCreate, TeacherAssessmentCreate, TeacherAssessmentOut, TeacherAssessmentUpdate
+from schemas.teacher_assessment_schema import ActivityProgressOut, TeacherActivityWeekCreate, TeacherAssessmentCreate, TeacherAssessmentOut, TeacherAssessmentUpdate
 from services.teacher_assessment_service import (
     add_teacher_activity_week,
     create_teacher_assessment,
     delete_teacher_assessment,
+    get_activity_progress,
     list_retake_requests,
     list_teacher_activity_weeks,
     list_teacher_assessments,
@@ -96,6 +97,17 @@ def set_student_retake_access_route(
         db=db,
         current_user=current_user,
     )
+
+
+@router.get("/{assessment_id}/progress", response_model=ActivityProgressOut)
+@limiter.limit("30/minute")
+def get_activity_progress_route(
+    request: Request,
+    assessment_id: int,
+    db: Session = Depends(get_db),
+    current_user: Accounts = Depends(get_current_user),
+):
+    return get_activity_progress(request, assessment_id, db, current_user)
 
 
 @router.get("/{assessment_type}", response_model=list[TeacherAssessmentOut])
