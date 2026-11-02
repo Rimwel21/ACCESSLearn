@@ -434,13 +434,18 @@ def _dashboard_progress_for_student(student: StudentProfile, classes: list[Teach
             )
             .all()
         ] if module_ids else []
+        activity_filters = [
+            TeacherAssessment.class_id.in_(matching_class_ids),
+            TeacherAssessment.assessment_type == "activity",
+        ]
+        # Older deployed databases/models may predate the audience column.
+        # Keep their existing activity records visible instead of failing the
+        # entire teacher records page while newer installs retain the split.
+        if hasattr(TeacherAssessment, "audience"):
+            activity_filters.append(TeacherAssessment.audience == activity_audience)
         activity_ids = [
             row.id for row in db.query(TeacherAssessment.id)
-            .filter(
-                TeacherAssessment.class_id.in_(matching_class_ids),
-                TeacherAssessment.assessment_type == "activity",
-                TeacherAssessment.audience == activity_audience,
-            )
+            .filter(*activity_filters)
             .all()
         ]
 
