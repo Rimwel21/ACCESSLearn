@@ -6,7 +6,6 @@ import cv2
 import numpy as np
 
 from core.handsign_config import HandSignSettings, get_handsign_settings
-from services.handsign.word_gesture_service import is_word_trained
 from services.handsign.word_scoring_service import score_sequence
 from utils.handsign.image import decode_base64_image
 from utils.handsign.science_vocabulary import canonical_word
@@ -58,11 +57,9 @@ def score_frame_sequence(word: str, images: list[str]) -> dict:
     if not images:
         raise ValueError("At least one frame is required.")
 
-    target_word = canonical_word(word)
-    if not is_word_trained(target_word):
-        raise RuntimeError(f"{target_word} is not available in the trained word model yet.")
-
-    return score_sequence(target_word, _frame_sequence(images))
+    # Reference similarity uses the saved Admin samples directly. It does not
+    # require the separate multi-class classifier to have been trained/published.
+    return score_sequence(canonical_word(word), _frame_sequence(images))
 
 
 def predict_frame_sequence(
