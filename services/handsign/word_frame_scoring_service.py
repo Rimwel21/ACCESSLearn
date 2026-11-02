@@ -65,7 +65,11 @@ def score_frame_sequence(word: str, images: list[str]) -> dict:
     return score_sequence(target_word, _frame_sequence(images))
 
 
-def predict_frame_sequence(images: list[str], settings: HandSignSettings | None = None) -> dict[str, float | str]:
+def predict_frame_sequence(
+    images: list[str],
+    expected_word: str | None = None,
+    settings: HandSignSettings | None = None,
+) -> dict[str, float | str]:
     """Predict the signed word from all Admin Word Gesture classes.
 
     The caller intentionally receives the label only on the server; student routes
@@ -84,7 +88,16 @@ def predict_frame_sequence(images: list[str], settings: HandSignSettings | None 
     features = resample_sequence(sequence, config.word_sequence_length).reshape(1, -1)
     probabilities = classifier.predict_proba(np.asarray(features, dtype=np.float32))[0]
     predicted_index = int(np.argmax(probabilities))
-    return {
+    result: dict[str, float | str] = {
         "predicted_word": canonical_word(str(classifier.classes_[predicted_index])),
         "confidence": float(probabilities[predicted_index]),
     }
+    if expected_word is not None:
+        target_word = canonical_word(expected_word)
+        matching_probabilities = [
+            float(probability)
+            for label, probability in zip(classifier.classes_, probabilities)
+            if canonical_word(str(label)) == target_word
+        ]
+        result["expected_confidence"] = float(sum(matching_probabilities))
+    return result

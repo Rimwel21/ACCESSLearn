@@ -230,16 +230,15 @@ def check_student_remediation_word_gesture(
     if not expected_word:
         raise HTTPException(status_code=422, detail="This question has no configured Word Gesture answer")
     try:
-        prediction = predict_frame_sequence(images)
+        prediction = predict_frame_sequence(images, expected_word)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    # The trained multi-class model chooses the word. Its probability is kept
-    # internal: the student receives only correct/incorrect feedback.
-    predicted_word = canonical_word(str(prediction["predicted_word"]))
-    return {"correct": predicted_word == canonical_word(expected_word)}
+    # Keep the probability internal. A 21% or higher model probability for the
+    # expected Admin word is accepted; students only receive correct/incorrect.
+    return {"correct": float(prediction.get("expected_confidence", 0.0)) >= 0.21}
 
 
 def _ensure_teacher(current_user) -> None:
