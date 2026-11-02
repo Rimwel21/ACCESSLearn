@@ -1,26 +1,32 @@
-import cv2
+import pickle
+from functools import lru_cache
+from pathlib import Path
 
+import cv2
+import numpy as np
+
+from core.handsign_config import HandSignSettings, get_handsign_settings
 from services.handsign.word_gesture_service import is_word_trained
 from services.handsign.word_scoring_service import score_sequence
 from utils.handsign.image import decode_base64_image
 from utils.handsign.science_vocabulary import canonical_word
-from utils.handsign.word_gesture_features import holistic_result_to_feature_vector
+from utils.handsign.word_gesture_features import holistic_result_to_feature_vector, resample_sequence
 
 
-def score_frame_sequence(word: str, images: list[str]) -> dict:
+def _settings(settings: HandSignSettings | None = None) -> HandSignSettings:
+    return settings or get_handsign_settings()
+
+
+def _frame_sequence(images: list[str]) -> list[list[float]]:
+    """Turn browser camera frames into the same landmark sequence used for training."""
     if not images:
         raise ValueError("At least one frame is required.")
-
-    target_word = canonical_word(word)
-    if not is_word_trained(target_word):
-        raise RuntimeError(f"{target_word} is not available in the trained word model yet.")
 
     import mediapipe as mp
 
     mp_holistic = mp.solutions.holistic
     sequence = []
     detected_frames = 0
-
     with mp_holistic.Holistic(
         static_image_mode=False,
         model_complexity=1,
@@ -37,5 +43,48 @@ def score_frame_sequence(word: str, images: list[str]) -> dict:
 
     if detected_frames == 0:
         raise ValueError("No body or hand landmarks were detected in the captured attempt.")
+    return sequence
 
-    return score_sequence(target_word, sequence)
+
+@lru_cache(maxsize=2)
+def _load_word_classifier(model_path: str, modified_at_ns: int):
+    """Cache the published classifier and refresh it after Admin publishes a replacement."""
+    del modified_at_ns
+    with Path(model_path).open("rb") as file:
+        return pickle.load(file)
+
+
+def score_frame_sequence(word: str, images: list[str]) -> dict:
+    if not images:
+        raise ValueError("At least one frame is required.")
+
+    target_word = canonical_word(word)
+    if not is_word_trained(target_word):
+        raise RuntimeError(f"{target_word} is not available in the trained word model yet.")
+
+    return score_sequence(target_word, _frame_sequence(images))
+
+
+def predict_frame_sequence(images: list[str], settings: HandSignSettings | None = None) -> dict[str, float | str]:
+    """Predict the signed word from all Admin Word Gesture classes.
+
+    The caller intentionally receives the label only on the server; student routes
+    should compare it to the expected answer and return a simple correct/incorrect result.
+    """
+    config = _settings(settings)
+    model_path = config.resolved_word_gesture_model_path()
+    if not model_path.exists():
+        raise RuntimeError("The Admin Word Gesture model has not been trained yet.")
+
+    classifier = _load_word_classifier(str(model_path), model_path.stat().st_mtime_ns)
+    if not hasattr(classifier, "predict_proba") or not hasattr(classifier, "classes_"):
+        raise RuntimeError("The published Admin Word Gesture model is invalid. Train it again.")
+
+    sequence = _frame_sequence(images)
+    features = resample_sequence(sequence, config.word_sequence_length).reshape(1, -1)
+    probabilities = classifier.predict_proba(np.asarray(features, dtype=np.float32))[0]
+    predicted_index = int(np.argmax(probabilities))
+    return {
+        "predicted_word": canonical_word(str(classifier.classes_[predicted_index])),
+        "confidence": float(probabilities[predicted_index]),
+    }

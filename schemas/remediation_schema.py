@@ -12,6 +12,7 @@ class RemediationQuestion(AssessmentQuestion):
     source_question_index: int | None = Field(default=None, ge=0)
     prompt_type: Literal["text", "sign_video"] = "text"
     sign_video_url: str | None = None
+    answer_week: str | None = Field(default=None, max_length=30)
 
 
 class RemediationInterventionCreate(BaseModel):
@@ -70,3 +71,13 @@ class RemediationActivityOut(BaseModel):
 
 class RemediationSubmit(BaseModel):
     answers: dict = Field(default_factory=dict)
+
+
+class RemediationAnswerCheck(BaseModel):
+    answer: str = Field(min_length=1, max_length=160)
+
+
+class RemediationWordFrameCheck(BaseModel):
+    """Camera frames for one word-gesture attempt; the expected word remains server-side."""
+
+    images: list[str] = Field(min_length=10, max_length=50)

@@ -17,8 +17,10 @@ from models.student_profile import StudentProfile
 from models.teacher_module import TeacherModule
 from schemas.remediation_schema import RemediationActivityCreate
 from services.push_notification_service import send_push_to_accounts
+from services.handsign.dataset_admin_service import week_labels
+from services.handsign.word_frame_scoring_service import predict_frame_sequence
 from utils.enum import RoleEnum, StudentType
-from utils.handsign.science_vocabulary import answers_match
+from utils.handsign.science_vocabulary import answers_match, canonical_word
 from utils.utc_now import utc_now
 
 
@@ -165,6 +167,83 @@ def submit_student_remediation_target(target_id: int, answers: dict, db: Session
     target.completed_at = utc_now()
     db.commit()
     return _student_target_dict(target, db, include_topics=True)
+
+
+def check_student_remediation_sign_answer(
+    target_id: int,
+    question_index: int,
+    answer: str,
+    db: Session,
+    current_user,
+) -> dict:
+    _ensure_student(current_user)
+    target = (
+        db.query(RemediationTarget)
+        .options(joinedload(RemediationTarget.intervention))
+        .filter(RemediationTarget.id == target_id, RemediationTarget.student_id == current_user.id)
+        .first()
+    )
+    if not target:
+        raise HTTPException(status_code=404, detail="Support activity not found")
+    if target.status == "completed":
+        raise HTTPException(status_code=409, detail="This support activity has already been submitted")
+    questions = target.intervention.questions or []
+    if question_index < 0 or question_index >= len(questions):
+        raise HTTPException(status_code=404, detail="Support question not found")
+    question = questions[question_index]
+    if question.get("prompt_type") != "sign_video":
+        raise HTTPException(status_code=422, detail="This question does not use a signed response")
+    return {"correct": answers_match(answer, str(question.get("answer") or ""))}
+
+
+def check_student_remediation_word_gesture(
+    target_id: int,
+    question_index: int,
+    images: list[str],
+    db: Session,
+    current_user,
+) -> dict:
+    """Score one complete word sign against the Admin Word Gesture dataset.
+
+    The expected answer deliberately stays on the server so the student sees only
+    whether their signed response was correct.
+    """
+    _ensure_student(current_user)
+    target = (
+        db.query(RemediationTarget)
+        .options(joinedload(RemediationTarget.intervention))
+        .filter(RemediationTarget.id == target_id, RemediationTarget.student_id == current_user.id)
+        .first()
+    )
+    if not target:
+        raise HTTPException(status_code=404, detail="Support activity not found")
+    if target.status == "completed":
+        raise HTTPException(status_code=409, detail="This support activity has already been submitted")
+    questions = target.intervention.questions or []
+    if question_index < 0 or question_index >= len(questions):
+        raise HTTPException(status_code=404, detail="Support question not found")
+    question = questions[question_index]
+    if question.get("prompt_type") != "sign_video":
+        raise HTTPException(status_code=422, detail="This question does not use a signed response")
+
+    expected_word = str(question.get("answer") or "").strip()
+    if not expected_word:
+        raise HTTPException(status_code=422, detail="This question has no configured Word Gesture answer")
+    try:
+        prediction = predict_frame_sequence(images)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    # A word is accepted only when the trained multi-class model predicts the
+    # expected word with enough internal confidence. Neither value is exposed to
+    # the student; the UI receives only correct/incorrect feedback.
+    predicted_word = canonical_word(str(prediction["predicted_word"]))
+    return {
+        "correct": predicted_word == canonical_word(expected_word)
+        and float(prediction["confidence"]) >= 0.55
+    }
 
 
 def _ensure_teacher(current_user) -> None:
@@ -353,7 +432,11 @@ def _score_questions(questions: list[dict], answers: dict) -> int:
     return sum(
         1
         for index, question in enumerate(questions)
-        if question.get("answer") and answers_match(str(answers.get(str(index), answers.get(index, ""))), question["answer"])
+        if (
+            str(answers.get(str(index), answers.get(index, ""))) == "__WORD_GESTURE_CORRECT__"
+            if question.get("prompt_type") == "sign_video"
+            else question.get("answer") and answers_match(str(answers.get(str(index), answers.get(index, ""))), question["answer"])
+        )
     )
 
 
@@ -388,14 +471,16 @@ def _stored_questions(item, checkpoint: ModuleCheckpoint | None, db: Session) ->
             raise HTTPException(status_code=422, detail="Select at least one student who missed each sign-language source question.")
 
         data["prompt"] = str(source.get("prompt") or "").strip()
-        correct_answer = _answer_text(source_answer)
-        if data.get("question_type") == "multiple_choice":
-            choices = [str(choice).strip() for choice in data.get("options") or []]
-            if correct_answer not in choices:
-                raise HTTPException(status_code=422, detail="Multiple-choice options must include the selected question's correct answer.")
-            data["answer"] = _multiple_choice_answer(choices, correct_answer)
-        else:
-            data["answer"] = correct_answer
+        answer_week = str(data.get("answer_week") or "").strip()
+        selected_answer = canonical_word(str(data.get("answer") or ""))
+        if not answer_week or not selected_answer or selected_answer not in set(week_labels(answer_week, db)):
+            raise HTTPException(
+                status_code=422,
+                detail="Select the signed answer from the Admin dataset for the selected week.",
+            )
+        data["answer"] = selected_answer
+        data["question_type"] = "identification"
+        data["options"] = []
         stored.append(data)
     return stored
 
