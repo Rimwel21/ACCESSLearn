@@ -5,10 +5,12 @@ from sqlalchemy.orm import Session, joinedload
 from models.accounts import Accounts
 from models.handsign_tutorial_practice import HandsignTutorialPractice
 from models.learning_topic import LearningTopic
+from models.module_checkpoint import ModuleCheckpoint
 from models.remediation_activity import RemediationActivity
 from models.remediation_intervention import RemediationIntervention
 from models.remediation_target import RemediationTarget
 from models.student_progress import StudentTopicProgress
+from models.student_checkpoint_attempt import StudentCheckpointAttempt
 from models.student_profile import StudentProfile
 from models.student_quiz_progress import StudentQuizProgress
 from models.assessment_retake_request import AssessmentRetakeRequest
@@ -19,7 +21,7 @@ from models.grade_levels import GradeLevels
 from models.HI_sections import HI_SECTIONS
 from schemas.teacher_class_schema import TeacherClassCreate
 from services.academic_service import ALLOWED_GRADE_NAMES, get_grade_level_or_404, get_section_for_grade_or_400
-from utils.enum import RoleEnum
+from utils.enum import RoleEnum, StudentType
 from utils.utc_now import utc_now
 
 
@@ -392,10 +394,10 @@ def _average_quiz_score(student_ids: list[int], class_ids: list[int], db: Sessio
 
 
 def _dashboard_progress_for_student(student: StudentProfile, classes: list[TeacherClass], db: Session, current_user: Accounts):
+    activity_audience = "hearing_impaired" if student.student_type == StudentType.HI else "regular"
     matching_class_ids = [
         teacher_class.id for teacher_class in classes
-        if teacher_class.grade_level_id == student.grade_level_id
-        and teacher_class.section_id == student.section_id
+        if teacher_class.section_id == student.section_id
     ]
     if not matching_class_ids:
         total_items = 0
@@ -409,11 +411,11 @@ def _dashboard_progress_for_student(student: StudentProfile, classes: list[Teach
         activity_correct_total = 0
         last_activity = None
         quiz_activity = None
+        has_started_progress = False
     else:
         module_ids = [
             row.id for row in db.query(TeacherModule.id)
             .filter(
-                TeacherModule.teacher_id == current_user.id,
                 TeacherModule.class_id.in_(matching_class_ids),
                 TeacherModule.status == "Published",
             )
@@ -427,7 +429,6 @@ def _dashboard_progress_for_student(student: StudentProfile, classes: list[Teach
         quiz_ids = [
             row.id for row in db.query(TeacherAssessment.id)
             .filter(
-                TeacherAssessment.teacher_id == current_user.id,
                 TeacherAssessment.module_id.in_(module_ids),
                 TeacherAssessment.assessment_type == "quiz",
             )
@@ -436,9 +437,9 @@ def _dashboard_progress_for_student(student: StudentProfile, classes: list[Teach
         activity_ids = [
             row.id for row in db.query(TeacherAssessment.id)
             .filter(
-                TeacherAssessment.teacher_id == current_user.id,
                 TeacherAssessment.class_id.in_(matching_class_ids),
                 TeacherAssessment.assessment_type == "activity",
+                TeacherAssessment.audience == activity_audience,
             )
             .all()
         ]
@@ -480,11 +481,12 @@ def _dashboard_progress_for_student(student: StudentProfile, classes: list[Teach
             default=None,
         )
         quiz_activity = _format_quiz_activity(latest_quiz_progress, db) if latest_quiz_progress else None
+        has_started_progress = bool(topic_progress or quiz_progress or activity_progress)
 
     status_percent = round((completed_items / total_items) * 100) if total_items else 0
     learning_material_percent = round((len(completed_topic_ids) / len(topic_ids)) * 100) if topic_ids else 0
     activity_percent = round((activity_correct_total / activity_question_total) * 100) if activity_question_total else 0
-    status_value = _progress_status_label(status_percent)
+    status_value = "Not Started" if not has_started_progress else _progress_status_label(status_percent)
     return {
         "student_id": student.account_id,
         "student_name": student.name,
@@ -568,13 +570,12 @@ def list_teacher_student_records(
 
     module_ids = [
         row.id for row in db.query(TeacherModule.id)
-        .filter(TeacherModule.teacher_id == current_user.id, TeacherModule.class_id.in_(class_ids))
+        .filter(TeacherModule.class_id.in_(class_ids))
         .all()
     ]
     material_modules = (
         db.query(TeacherModule)
         .filter(
-            TeacherModule.teacher_id == current_user.id,
             TeacherModule.class_id.in_(class_ids),
             TeacherModule.status == 'Published',
         )
@@ -597,6 +598,16 @@ def list_teacher_student_records(
     for topic in material_topics:
         material_topics_by_module.setdefault(topic.module_id, []).append(topic)
 
+    material_checkpoints = (
+        db.query(ModuleCheckpoint)
+        .filter(ModuleCheckpoint.module_id.in_(material_module_ids))
+        .order_by(ModuleCheckpoint.start_sort_order.asc())
+        .all()
+    ) if material_module_ids else []
+    material_checkpoints_by_module: dict[int, list[ModuleCheckpoint]] = {}
+    for checkpoint in material_checkpoints:
+        material_checkpoints_by_module.setdefault(checkpoint.module_id, []).append(checkpoint)
+
     material_topic_ids = [topic.id for topic in material_topics]
     material_progress_rows = (
         db.query(StudentTopicProgress)
@@ -610,7 +621,21 @@ def list_teacher_student_records(
         (progress.student_id, progress.topic_id): progress
         for progress in material_progress_rows
     }
-    assessment_filters = [TeacherAssessment.teacher_id == current_user.id]
+    material_checkpoint_ids = [checkpoint.id for checkpoint in material_checkpoints]
+    checkpoint_attempt_rows = (
+        db.query(StudentCheckpointAttempt)
+        .filter(
+            StudentCheckpointAttempt.student_id.in_(student_ids),
+            StudentCheckpointAttempt.checkpoint_id.in_(material_checkpoint_ids),
+        )
+        .all()
+    ) if material_checkpoint_ids else []
+    checkpoint_attempt_by_student_checkpoint = {
+        (attempt.student_id, attempt.checkpoint_id): attempt
+        for attempt in checkpoint_attempt_rows
+    }
+
+    assessment_filters = []
     activity_filter = (
         (TeacherAssessment.assessment_type == 'activity')
         & (TeacherAssessment.class_id.in_(class_ids))
@@ -675,7 +700,7 @@ def list_teacher_student_records(
         )
         .filter(
             RemediationTarget.student_id.in_(student_ids),
-            RemediationActivity.teacher_id == current_user.id,
+            RemediationActivity.module_id.in_(module_ids),
         )
         .order_by(RemediationTarget.updated_at.desc())
         .all()
@@ -708,8 +733,7 @@ def list_teacher_student_records(
         matching_class_ids = {
             teacher_class.id
             for teacher_class in classes
-            if teacher_class.grade_level_id == student.grade_level_id
-            and teacher_class.section_id == student.section_id
+            if teacher_class.section_id == student.section_id
         }
         material_records = []
         for matching_class_id in matching_class_ids:
@@ -722,6 +746,17 @@ def list_teacher_student_records(
                 ]
                 completed_topics = sum(item.status == 'completed' for item in progress_items)
                 total_topics = len(topics)
+                checkpoints = material_checkpoints_by_module.get(module.id, [])
+                checkpoint_attempts = [
+                    checkpoint_attempt_by_student_checkpoint[(student.account_id, checkpoint.id)]
+                    for checkpoint in checkpoints
+                    if (student.account_id, checkpoint.id) in checkpoint_attempt_by_student_checkpoint
+                ]
+                latest_checkpoint_attempt = max(
+                    checkpoint_attempts,
+                    key=lambda item: item.updated_at or item.completed_at or item.created_at,
+                    default=None,
+                )
                 if total_topics and completed_topics == total_topics:
                     material_status = 'completed'
                 elif progress_items:
@@ -729,7 +764,13 @@ def list_teacher_student_records(
                 else:
                     material_status = 'not_started'
                 last_updated = max(
-                    (item.updated_at or item.completed_at or item.started_at for item in progress_items),
+                    (
+                        item.updated_at
+                        or item.completed_at
+                        or getattr(item, 'started_at', None)
+                        or getattr(item, 'created_at', None)
+                        for item in progress_items + checkpoint_attempts
+                    ),
                     default=None,
                 )
                 material_records.append({
@@ -737,6 +778,10 @@ def list_teacher_student_records(
                     'title': module.title,
                     'completed_topics': completed_topics,
                     'total_topics': total_topics,
+                    'completed_checkpoints': len(checkpoint_attempts),
+                    'total_checkpoints': len(checkpoints),
+                    'latest_checkpoint_score': latest_checkpoint_attempt.score if latest_checkpoint_attempt else None,
+                    'latest_checkpoint_total': latest_checkpoint_attempt.total if latest_checkpoint_attempt else None,
                     'percent': round(completed_topics / total_topics * 100) if total_topics else 0,
                     'status': material_status,
                     'last_updated': last_updated,

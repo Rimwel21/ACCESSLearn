@@ -133,6 +133,10 @@ class TeacherStudentRecordMaterialOut(BaseModel):
     title: str
     completed_topics: int
     total_topics: int
+    completed_checkpoints: int = 0
+    total_checkpoints: int = 0
+    latest_checkpoint_score: int | None = None
+    latest_checkpoint_total: int | None = None
     percent: int
     status: str
     last_updated: datetime | None = None
