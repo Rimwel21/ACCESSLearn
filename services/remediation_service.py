@@ -236,14 +236,10 @@ def check_student_remediation_word_gesture(
     except RuntimeError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    # A word is accepted only when the trained multi-class model predicts the
-    # expected word with enough internal confidence. Neither value is exposed to
-    # the student; the UI receives only correct/incorrect feedback.
+    # The trained multi-class model chooses the word. Its probability is kept
+    # internal: the student receives only correct/incorrect feedback.
     predicted_word = canonical_word(str(prediction["predicted_word"]))
-    return {
-        "correct": predicted_word == canonical_word(expected_word)
-        and float(prediction["confidence"]) >= 0.55
-    }
+    return {"correct": predicted_word == canonical_word(expected_word)}
 
 
 def _ensure_teacher(current_user) -> None:
