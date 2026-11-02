@@ -1,6 +1,7 @@
 import unittest
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
+from unittest.mock import patch
 
 from fastapi import HTTPException, Request, Response, UploadFile
 from fastapi.security import HTTPAuthorizationCredentials
@@ -202,6 +203,20 @@ class SecurityControlTests(unittest.TestCase):
     def test_material_upload_accepts_valid_signature(self):
         material = upload("lesson.pdf", "application/pdf", b"%PDF-1.7\ncontent")
         _validate_material_file(material, "PDF")
+
+    def test_material_upload_accepts_large_presentation_within_configured_limit(self):
+        original_limit = settings.max_material_upload_mb
+        try:
+            settings.max_material_upload_mb = 100
+            material = upload(
+                "lesson.pptx",
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                b"PK\x03\x04presentation",
+            )
+            with patch("services.teacher_module_service._upload_file_size", return_value=80 * 1024 * 1024):
+                _validate_material_file(material, "PPTX")
+        finally:
+            settings.max_material_upload_mb = original_limit
 
     def test_material_upload_rejects_bad_extension_mime_signature_and_size(self):
         cases = [

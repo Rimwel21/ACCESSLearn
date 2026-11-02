@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     refresh_cookie_secure: bool = False
     refresh_cookie_samesite: Literal["lax", "strict", "none"] = "lax"
     enable_hsts: bool = True
-    max_material_upload_mb: int = 25
+    max_material_upload_mb: int = 100
     max_profile_image_upload_mb: int = 5
     cors_origins: str = ""
 
