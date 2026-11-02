@@ -1,5 +1,5 @@
 from fastapi import HTTPException, Request, status
-from sqlalchemy import func, or_
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 from models.accounts import Accounts
@@ -318,7 +318,8 @@ def list_recent_activities(request: Request, limit: int, db: Session, current_us
 
 
 def _matching_student_query(teacher_class: TeacherClass, db: Session):
-    section_name = teacher_class.sections.name if teacher_class.sections else ""
+    # A student's enrollment is stored by section ID. Matching display names can
+    # exclude valid students when names are edited or duplicated.
     return (
         db.query(StudentProfile)
         .options(
@@ -326,10 +327,8 @@ def _matching_student_query(teacher_class: TeacherClass, db: Session):
             joinedload(StudentProfile.section)
         )
         .join(Accounts, Accounts.id == StudentProfile.account_id)
-        .join(HI_SECTIONS, StudentProfile.section_id == HI_SECTIONS.id)
         .filter(
-            StudentProfile.grade_level_id == teacher_class.grade_level_id,
-            func.lower(func.trim(HI_SECTIONS.name)) == section_name.strip().lower(),
+            StudentProfile.section_id == teacher_class.section_id,
             Accounts.role == RoleEnum.student,
         )
         .order_by(StudentProfile.name.asc())
@@ -341,24 +340,18 @@ def _count_matching_students(teacher_class: TeacherClass, db: Session):
 
 
 def _unique_students_for_classes(classes: list[TeacherClass], db: Session):
-    filters = []
-    for teacher_class in classes:
-        section_name = teacher_class.sections.name if teacher_class.sections else ""
-        filters.append(
-            (
-                StudentProfile.grade_level_id == teacher_class.grade_level_id
-            ) & (
-                func.lower(func.trim(HI_SECTIONS.name)) == section_name.strip().lower()
-            )
-        )
-    if not filters:
+    section_ids = sorted({teacher_class.section_id for teacher_class in classes if teacher_class.section_id})
+    if not section_ids:
         return []
 
     return (
         db.query(StudentProfile)
+        .options(joinedload(StudentProfile.grade_level), joinedload(StudentProfile.section))
         .join(Accounts, Accounts.id == StudentProfile.account_id)
-        .join(HI_SECTIONS, StudentProfile.section_id == HI_SECTIONS.id)
-        .filter(Accounts.role == RoleEnum.student, or_(*filters))
+        .filter(
+            Accounts.role == RoleEnum.student,
+            StudentProfile.section_id.in_(section_ids),
+        )
         .order_by(StudentProfile.name.asc())
         .all()
     )
