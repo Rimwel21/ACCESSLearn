@@ -13,10 +13,9 @@ from utils.enum import RoleEnum
 
 
 FOCUS_AREAS = {
-    "change_in_matter": "Change in Matter",
-    "photosynthesis": "Plant Processes / Photosynthesis",
-    "force_and_motion": "Force and Motion",
-    "water_cycle": "Water Cycle",
+    "life_cycle": "Life Cycle",
+    "dietary_classification": "Dietary Classification of Animals",
+    "food_chain": "Food Chain",
 }
 VIDEO_DIR = Path("static/learning_sign_videos")
 ALLOWED_EXTENSIONS = {".mp4", ".webm", ".mov", ".avi"}
@@ -39,7 +38,7 @@ def upload_topic_sign_video(
 ) -> TopicSignVideo:
     topic = _teacher_topic(module_id, topic_id, db, current_user)
     if focus_area not in FOCUS_AREAS:
-        raise HTTPException(status_code=422, detail="Choose one of the four supported sign-language focus areas.")
+        raise HTTPException(status_code=422, detail="Choose one of the supported sign-language focus areas.")
 
     destination = _save_video(video)
     assignment = next((item for item in topic.sign_videos if item.focus_area == focus_area), None)
