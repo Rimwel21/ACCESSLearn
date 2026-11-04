@@ -16,8 +16,11 @@ def _settings(settings: HandSignSettings | None = None) -> HandSignSettings:
     return settings or get_handsign_settings()
 
 
-MIN_HAND_FRAME_RATIO = 0.60
-MIN_HAND_MOTION = 0.025
+# These only reject a truly absent or almost entirely still gesture.  The
+# similarity score remains the deciding pass/fail value for real attempts:
+# slower full-word signs can have small landmark movement between frames.
+MIN_HAND_FRAME_RATIO = 0.45
+MIN_HAND_MOTION = 0.008
 # Admin recordings currently produce valid full signs around 50%, while an
 # idle/no-gesture attempts are screened separately by hand visibility and
 # movement. Once those checks pass, 45% is the explicit pass threshold.
