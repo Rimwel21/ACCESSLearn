@@ -18,7 +18,11 @@ def _settings(settings: HandSignSettings | None = None) -> HandSignSettings:
 
 MIN_HAND_FRAME_RATIO = 0.60
 MIN_HAND_MOTION = 0.025
-PASS_SIMILARITY_PERCENT = 70.0
+# Admin recordings currently produce valid full signs around 50%, while an
+# idle/wrong attempt is screened separately by hand visibility, movement, and
+# competing-word checks below.  Keep the similarity pass line attainable for
+# genuine student attempts without allowing a percentage alone to decide.
+PASS_SIMILARITY_PERCENT = 45.0
 COMPETING_DISTANCE_RATIO = 0.90
 
 
