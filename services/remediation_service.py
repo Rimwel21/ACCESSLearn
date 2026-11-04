@@ -18,7 +18,7 @@ from models.teacher_module import TeacherModule
 from schemas.remediation_schema import RemediationActivityCreate
 from services.push_notification_service import send_push_to_accounts
 from services.handsign.dataset_admin_service import week_labels
-from services.handsign.word_frame_scoring_service import score_frame_sequence
+from services.handsign.word_frame_scoring_service import assess_frame_sequence
 from utils.enum import RoleEnum, StudentType
 from utils.handsign.science_vocabulary import answers_match, canonical_word
 from utils.utc_now import utc_now
@@ -252,19 +252,13 @@ def check_student_remediation_word_gesture(
     if not expected_word:
         raise HTTPException(status_code=422, detail="This question has no configured Word Gesture answer")
     try:
-        score = score_frame_sequence(expected_word, images)
+        assessment = assess_frame_sequence(expected_word, images)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    # Use the same expected-word/reference similarity score as tutorial
-    # practice. The UI may show the percentage while the threshold is tuned.
-    similarity_percent = float(score["score"])
-    return {
-        "correct": similarity_percent >= 21.0,
-        "similarity_percent": round(similarity_percent, 2),
-    }
+    return assessment
 
 
 def _ensure_teacher(current_user) -> None:

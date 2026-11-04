@@ -39,6 +39,33 @@ def load_target_references(word: str, settings: HandSignSettings | None = None) 
     return np.asarray(references, dtype=np.float32)
 
 
+def nearest_competing_reference(word: str, sequence: list[list[float]], settings: HandSignSettings | None = None) -> dict[str, float | str] | None:
+    """Return the closest saved reference belonging to another word."""
+    config = _settings(settings)
+    target = canonical_word(word)
+    normalized_sequence = resample_sequence(sequence, config.word_sequence_length)
+    nearest_word = ""
+    nearest_distance: float | None = None
+    dataset_dir = config.resolved_word_gesture_dataset_path()
+    if not dataset_dir.exists():
+        return None
+
+    for path in dataset_dir.rglob("*.npz"):
+        candidate_word = canonical_word(path.parent.name)
+        if candidate_word == target:
+            continue
+        data = np.load(path)
+        candidate = resample_sequence(data["sequence"], config.word_sequence_length)
+        distance = float(np.mean(np.linalg.norm(candidate - normalized_sequence, axis=1)))
+        if nearest_distance is None or distance < nearest_distance:
+            nearest_distance = distance
+            nearest_word = candidate_word
+
+    if nearest_distance is None:
+        return None
+    return {"word": nearest_word, "distance": nearest_distance}
+
+
 def target_distance_threshold(references: np.ndarray) -> float:
     if len(references) < 2:
         return 1.0
