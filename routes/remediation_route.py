@@ -18,6 +18,7 @@ from services.remediation_service import (
     list_student_remediation_activities,
     list_teacher_remediation_activities,
     submit_student_remediation_target,
+    upload_remediation_review_video,
     upload_remediation_question_video,
 )
 from utils.dependencies import get_current_user, get_db
@@ -56,6 +57,20 @@ async def upload_remediation_question_video_route(
     current_user: Accounts = Depends(get_current_user),
 ):
     return upload_remediation_question_video(activity_id, intervention_id, question_index, video, db, current_user)
+
+
+@teacher_router.post("/{activity_id}/interventions/{intervention_id}/review-video", response_model=RemediationActivityOut)
+@limiter.limit("10/minute")
+async def upload_remediation_review_video_route(
+    request: Request,
+    activity_id: int,
+    intervention_id: int,
+    video: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: Accounts = Depends(get_current_user),
+):
+    """Fallback guide when this topic group has no Topic Progress sign video."""
+    return upload_remediation_review_video(activity_id, intervention_id, video, db, current_user)
 
 
 @student_router.get("/")

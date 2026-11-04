@@ -276,6 +276,21 @@ def _ensure_checkpoint_and_remediation_schema() -> None:
         table.create(bind=engine, checkfirst=True)
 
 
+    # Existing deployments may predate the optional per-group support-video field.
+    inspector = inspect(engine)
+    table_name = RemediationIntervention.__tablename__
+    if not inspector.has_table(table_name):
+        return
+    columns = {column["name"] for column in inspector.get_columns(table_name)}
+    if "video_url" not in columns:
+        statement = (
+            "ALTER TABLE remediation_interventions ADD COLUMN IF NOT EXISTS video_url VARCHAR(500)"
+            if engine.dialect.name == "postgresql" else
+            "ALTER TABLE remediation_interventions ADD COLUMN video_url VARCHAR(500)"
+        )
+        with engine.begin() as connection:
+            connection.execute(text(statement))
+
 def _ensure_topic_sign_video_schema() -> None:
     """Create topic-level sign-language support storage for existing databases."""
     TopicSignVideo.__table__.create(bind=engine, checkfirst=True)

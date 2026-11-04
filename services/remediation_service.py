@@ -25,6 +25,7 @@ from utils.utc_now import utc_now
 
 
 QUESTION_VIDEO_DIR = Path("static/remediation_question_videos")
+REVIEW_VIDEO_DIR = Path("static/remediation_review_videos")
 ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".webm", ".mov", ".avi"}
 MAX_VIDEO_BYTES = 100 * 1024 * 1024
 
@@ -116,6 +117,27 @@ def upload_remediation_question_video(
     question["sign_video_url"] = f"/static/remediation_question_videos/{destination.name}"
     questions[question_index] = question
     intervention.questions = questions
+    db.commit()
+    if old_path:
+        old_path.unlink(missing_ok=True)
+    return _teacher_activity_dict(_teacher_activity(activity.id, db, current_user), db)
+
+
+def upload_remediation_review_video(
+    activity_id: int,
+    intervention_id: int,
+    video: UploadFile,
+    db: Session,
+    current_user,
+) -> dict:
+    activity = _teacher_activity(activity_id, db, current_user)
+    intervention = next((item for item in activity.interventions if item.id == intervention_id), None)
+    if not intervention:
+        raise HTTPException(status_code=404, detail="Remediation topic group not found")
+
+    destination = _save_video(video, REVIEW_VIDEO_DIR, "Targeted-support review videos")
+    old_path = _review_video_path(intervention.video_url)
+    intervention.video_url = f"/static/remediation_review_videos/{destination.name}"
     db.commit()
     if old_path:
         old_path.unlink(missing_ok=True)
@@ -360,6 +382,7 @@ def _teacher_activity_dict(activity: RemediationActivity, db: Session) -> dict:
                 "end_sort_order": item.end_sort_order,
                 "title": item.title,
                 "instructions": item.instructions,
+                "review_video_url": item.video_url,
                 "questions": item.questions or [],
                 "targets": [
                     {
@@ -398,6 +421,7 @@ def _student_target_dict(target: RemediationTarget, db: Session, *, include_topi
         "due_at": activity.due_at,
         "title": intervention.title,
         "instructions": intervention.instructions,
+        "review_video_url": intervention.video_url,
         "start_sort_order": intervention.start_sort_order,
         "end_sort_order": intervention.end_sort_order,
         "questions": questions,
@@ -417,8 +441,17 @@ def _student_target_dict(target: RemediationTarget, db: Session, *, include_topi
                 "image_url": topic.image_url,
                 "page_image_urls": topic.page_image_urls or [],
                 "sort_order": topic.sort_order,
+                "sign_videos": [
+                    {
+                        "id": video.id,
+                        "title": video.title,
+                        "focus_area": video.focus_area,
+                        "video_url": video.video_url,
+                    }
+                    for video in topic.sign_videos
+                ],
             }
-            for topic in db.query(LearningTopic).filter(
+            for topic in db.query(LearningTopic).options(joinedload(LearningTopic.sign_videos)).filter(
                 LearningTopic.module_id == activity.module_id,
                 LearningTopic.sort_order >= intervention.start_sort_order,
                 LearningTopic.sort_order <= intervention.end_sort_order,
@@ -543,3 +576,9 @@ def _question_video_path(url: str | None) -> Path | None:
     if not url or not url.startswith("/static/remediation_question_videos/"):
         return None
     return QUESTION_VIDEO_DIR / Path(url).name
+
+
+def _review_video_path(url: str | None) -> Path | None:
+    if not url or not url.startswith("/static/remediation_review_videos/"):
+        return None
+    return REVIEW_VIDEO_DIR / Path(url).name
