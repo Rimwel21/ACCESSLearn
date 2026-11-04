@@ -74,6 +74,12 @@ class RemediationSubmit(BaseModel):
     answers: dict = Field(default_factory=dict)
 
 
+class RemediationProgressUpdate(BaseModel):
+    stage: Literal["review", "questions"]
+    topic_index: int = Field(default=0, ge=0)
+    question_index: int = Field(default=0, ge=0)
+
+
 class RemediationAnswerCheck(BaseModel):
     answer: str = Field(min_length=1, max_length=160)
 

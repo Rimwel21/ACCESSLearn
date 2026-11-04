@@ -16,6 +16,7 @@ class RemediationTarget(Base):
     student_id = Column(Integer, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False, index=True)
     status = Column(String(20), nullable=False, default="assigned")
     answers = Column(JSON, default=dict, nullable=False)
+    progress = Column(JSON, default=dict, nullable=False)
     score = Column(Integer, nullable=True)
     total = Column(Integer, nullable=True)
     completed_at = Column(DateTime(timezone=True), nullable=True)

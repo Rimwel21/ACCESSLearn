@@ -7,6 +7,7 @@ from schemas.remediation_schema import (
     RemediationActivityCreate,
     RemediationActivityOut,
     RemediationAnswerCheck,
+    RemediationProgressUpdate,
     RemediationSubmit,
     RemediationWordFrameCheck,
 )
@@ -17,6 +18,7 @@ from services.remediation_service import (
     check_student_remediation_word_gesture,
     list_student_remediation_activities,
     list_teacher_remediation_activities,
+    save_student_remediation_progress,
     submit_student_remediation_target,
     upload_remediation_review_video,
     upload_remediation_question_video,
@@ -83,6 +85,18 @@ def list_student_remediation_route(request: Request, db: Session = Depends(get_d
 @limiter.limit("20/minute")
 def get_student_remediation_route(target_id: int, request: Request, db: Session = Depends(get_db), current_user: Accounts = Depends(get_current_user)):
     return get_student_remediation_target(target_id, db, current_user)
+
+
+@student_router.put("/{target_id}/progress")
+@limiter.limit("30/minute")
+def save_student_remediation_progress_route(
+    target_id: int,
+    payload: RemediationProgressUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: Accounts = Depends(get_current_user),
+):
+    return save_student_remediation_progress(target_id, payload.stage, payload.topic_index, payload.question_index, db, current_user)
 
 
 @student_router.post("/{target_id}/questions/{question_index}/check")

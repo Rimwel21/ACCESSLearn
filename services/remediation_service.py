@@ -169,6 +169,41 @@ def get_student_remediation_target(target_id: int, db: Session, current_user) ->
     return _student_target_dict(target, db, include_topics=True)
 
 
+def save_student_remediation_progress(
+    target_id: int,
+    stage: str,
+    topic_index: int,
+    question_index: int,
+    db: Session,
+    current_user,
+) -> dict:
+    _ensure_student(current_user)
+    target = _student_target(target_id, db, current_user)
+    if target.status == "completed":
+        return _student_target_dict(target, db, include_topics=True)
+
+    topic_count = db.query(LearningTopic).filter(
+        LearningTopic.module_id == target.intervention.activity.module_id,
+        LearningTopic.sort_order >= target.intervention.start_sort_order,
+        LearningTopic.sort_order <= target.intervention.end_sort_order,
+    ).count()
+    question_count = len(target.intervention.questions or [])
+    if stage == "review" and topic_index >= max(topic_count, 1):
+        raise HTTPException(status_code=422, detail="Support review topic not found")
+    if stage == "questions" and question_index >= max(question_count, 1):
+        raise HTTPException(status_code=422, detail="Support question not found")
+
+    target.progress = {
+        **(target.progress or {}),
+        "stage": stage,
+        "topic_index": topic_index,
+        "question_index": question_index,
+    }
+    target.status = "in_progress"
+    db.commit()
+    return _student_target_dict(target, db, include_topics=True)
+
+
 def submit_student_remediation_target(target_id: int, answers: dict, db: Session, current_user) -> dict:
     _ensure_student(current_user)
     target = (
@@ -258,6 +293,20 @@ def check_student_remediation_word_gesture(
     except RuntimeError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    answers = dict(target.answers or {})
+    answers[str(question_index)] = "__WORD_GESTURE_CORRECT__" if assessment["correct"] else "__WORD_GESTURE_INCORRECT__"
+    progress = dict(target.progress or {})
+    checks = dict(progress.get("checks") or {})
+    checks[str(question_index)] = assessment
+    target.answers = answers
+    target.progress = {
+        **progress,
+        "stage": "questions",
+        "question_index": question_index,
+        "checks": checks,
+    }
+    target.status = "in_progress"
+    db.commit()
     return assessment
 
 
@@ -269,6 +318,18 @@ def _ensure_teacher(current_user) -> None:
 def _ensure_student(current_user) -> None:
     if current_user.role != RoleEnum.student:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Student only")
+
+
+def _student_target(target_id: int, db: Session, current_user) -> RemediationTarget:
+    target = (
+        db.query(RemediationTarget)
+        .options(joinedload(RemediationTarget.intervention).joinedload(RemediationIntervention.activity))
+        .filter(RemediationTarget.id == target_id, RemediationTarget.student_id == current_user.id)
+        .first()
+    )
+    if not target:
+        raise HTTPException(status_code=404, detail="Support activity not found")
+    return target
 
 
 def _teacher_module(module_id: int, db: Session, current_user) -> TeacherModule:
@@ -419,6 +480,8 @@ def _student_target_dict(target: RemediationTarget, db: Session, *, include_topi
         "start_sort_order": intervention.start_sort_order,
         "end_sort_order": intervention.end_sort_order,
         "questions": questions,
+        "saved_answers": target.answers or {},
+        "progress": target.progress or {},
         "status": target.status,
         "score": target.score,
         "total": target.total,
