@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 
 from core.handsign_config import HandSignSettings, get_handsign_settings
-from services.handsign.word_scoring_service import nearest_competing_reference, score_sequence
+from services.handsign.word_scoring_service import score_sequence
 from utils.handsign.image import decode_base64_image
 from utils.handsign.science_vocabulary import canonical_word
 from utils.handsign.word_gesture_features import holistic_result_to_feature_vector, resample_sequence
@@ -19,11 +19,9 @@ def _settings(settings: HandSignSettings | None = None) -> HandSignSettings:
 MIN_HAND_FRAME_RATIO = 0.60
 MIN_HAND_MOTION = 0.025
 # Admin recordings currently produce valid full signs around 50%, while an
-# idle/wrong attempt is screened separately by hand visibility, movement, and
-# competing-word checks below.  Keep the similarity pass line attainable for
-# genuine student attempts without allowing a percentage alone to decide.
+# idle/no-gesture attempts are screened separately by hand visibility and
+# movement. Once those checks pass, 45% is the explicit pass threshold.
 PASS_SIMILARITY_PERCENT = 45.0
-COMPETING_DISTANCE_RATIO = 0.90
 
 
 def _frame_sequence_with_quality(images: list[str]) -> tuple[list[list[float]], dict[str, float]]:
@@ -105,18 +103,13 @@ def assess_frame_sequence(word: str, images: list[str]) -> dict[str, float | boo
             "feedback": "Show the complete word gesture with clear hand movement before checking.",
         }
 
-    competitor = nearest_competing_reference(target_word, sequence)
-    target_distance = float(score["target_distance"])
-    closer_than_other_words = competitor is None or target_distance <= float(competitor["distance"]) * COMPETING_DISTANCE_RATIO
     if similarity < PASS_SIMILARITY_PERCENT:
         feedback = "Your sign is not close enough to the saved reference samples yet. Try the full gesture again."
-    elif not closer_than_other_words:
-        feedback = "This gesture looks closer to a different saved word. Review the guide video and try again."
     else:
         feedback = "Correct sign! Your answer has been recorded."
 
     return {
-        "correct": similarity >= PASS_SIMILARITY_PERCENT and closer_than_other_words,
+        "correct": similarity >= PASS_SIMILARITY_PERCENT,
         "similarity_percent": round(similarity, 2),
         "feedback": feedback,
     }
