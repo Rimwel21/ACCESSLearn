@@ -145,6 +145,33 @@ class TeacherStudentRecordHandsignOut(BaseModel):
     completed_at: datetime | None = None
 
 
+class TeacherStudentRecordMaterialOut(BaseModel):
+    id: int
+    title: str
+    completed_topics: int
+    total_topics: int
+    completed_checkpoints: int = 0
+    total_checkpoints: int = 0
+    latest_checkpoint_score: int | None = None
+    latest_checkpoint_total: int | None = None
+    percent: int
+    status: str
+    last_updated: datetime | None = None
+
+
+class TeacherStudentRecordTargetedSupportOut(BaseModel):
+    id: int
+    activity_title: str
+    intervention_title: str
+    start_sort_order: int
+    end_sort_order: int
+    status: str
+    score: int | None = None
+    total: int | None = None
+    due_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
 class TeacherStudentRecordOut(BaseModel):
     student_id: int
     student_name: str
@@ -176,3 +203,5 @@ class TeacherStudentRecordOut(BaseModel):
     quiz_activity: str | None = None
     assessments: list[TeacherStudentRecordAssessmentOut] = Field(default_factory=list)
     handsign_practice: list[TeacherStudentRecordHandsignOut] = Field(default_factory=list)
+    learning_materials: list[TeacherStudentRecordMaterialOut] = Field(default_factory=list)
+    targeted_support: list[TeacherStudentRecordTargetedSupportOut] = Field(default_factory=list)

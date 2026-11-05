@@ -5,7 +5,12 @@ from sqlalchemy.orm import Session, joinedload
 from models.accounts import Accounts
 from models.handsign_tutorial_practice import HandsignTutorialPractice
 from models.learning_topic import LearningTopic
+from models.module_checkpoint import ModuleCheckpoint
+from models.remediation_activity import RemediationActivity
+from models.remediation_intervention import RemediationIntervention
+from models.remediation_target import RemediationTarget
 from models.student_progress import StudentTopicProgress
+from models.student_checkpoint_attempt import StudentCheckpointAttempt
 from models.student_profile import StudentProfile
 from models.student_quiz_progress import StudentQuizProgress
 from models.assessment_retake_request import AssessmentRetakeRequest
@@ -17,7 +22,7 @@ from models.HI_sections import HI_SECTIONS
 from schemas.teacher_class_schema import TeacherClassCreate
 from services.academic_service import ALLOWED_GRADE_NAMES, get_grade_level_or_404, get_section_for_grade_or_400
 from services.student_module_service import _visible_topics
-from utils.enum import RoleEnum
+from utils.enum import RoleEnum, StudentType
 from utils.utc_now import utc_now
 
 
@@ -319,6 +324,8 @@ def list_recent_activities(request: Request, limit: int, db: Session, current_us
 
 
 def _matching_student_query(teacher_class: TeacherClass, db: Session):
+    # A student's enrollment is stored by section ID. Matching display names can
+    # exclude valid students when names are edited or duplicated.
     return (
         db.query(StudentProfile)
         .options(
@@ -327,7 +334,6 @@ def _matching_student_query(teacher_class: TeacherClass, db: Session):
         )
         .join(Accounts, Accounts.id == StudentProfile.account_id)
         .filter(
-            StudentProfile.grade_level_id == teacher_class.grade_level_id,
             StudentProfile.section_id == teacher_class.section_id,
             Accounts.role == RoleEnum.student,
         )
@@ -340,12 +346,13 @@ def _count_matching_students(teacher_class: TeacherClass, db: Session):
 
 
 def _unique_students_for_classes(classes: list[TeacherClass], db: Session):
-    section_ids = {teacher_class.section_id for teacher_class in classes}
+    section_ids = sorted({teacher_class.section_id for teacher_class in classes if teacher_class.section_id})
     if not section_ids:
         return []
 
     return (
         db.query(StudentProfile)
+        .options(joinedload(StudentProfile.grade_level), joinedload(StudentProfile.section))
         .join(Accounts, Accounts.id == StudentProfile.account_id)
         .filter(
             Accounts.role == RoleEnum.student,
@@ -389,10 +396,10 @@ def _average_quiz_score(student_ids: list[int], class_ids: list[int], db: Sessio
 
 
 def _dashboard_progress_for_student(student: StudentProfile, classes: list[TeacherClass], db: Session, current_user: Accounts):
+    activity_audience = "hearing_impaired" if student.student_type == StudentType.HI else "regular"
     matching_class_ids = [
         teacher_class.id for teacher_class in classes
-        if teacher_class.grade_level_id == student.grade_level_id
-        and teacher_class.section_id == student.section_id
+        if teacher_class.section_id == student.section_id
     ]
     module_ids = [
         row.id for row in db.query(TeacherModule.id)
@@ -419,11 +426,14 @@ def _dashboard_progress_for_student(student: StudentProfile, classes: list[Teach
         TeacherAssessment.module_id.in_(module_ids),
         TeacherAssessment.assessment_type == "quiz",
     ).all() if module_ids else []
-    activities = db.query(TeacherAssessment).filter(
+    activity_filters = [
         TeacherAssessment.teacher_id == current_user.id,
         TeacherAssessment.class_id.in_(matching_class_ids),
         TeacherAssessment.assessment_type == "activity",
-    ).all() if matching_class_ids else []
+    ]
+    if hasattr(TeacherAssessment, "audience"):
+        activity_filters.append(TeacherAssessment.audience == activity_audience)
+    activities = db.query(TeacherAssessment).filter(*activity_filters).all() if matching_class_ids else []
     quiz_ids = [assessment.id for assessment in quizzes]
     activity_ids = [assessment.id for assessment in activities]
     assessment_ids = quiz_ids + activity_ids
@@ -599,7 +609,69 @@ def list_teacher_student_records(
         )
         .all()
     ]
-    assessment_filters = [TeacherAssessment.teacher_id == current_user.id]
+    material_modules = (
+        db.query(TeacherModule)
+        .filter(
+            TeacherModule.class_id.in_(class_ids),
+            TeacherModule.status == 'Published',
+        )
+        .order_by(TeacherModule.created_at.desc())
+        .all()
+    )
+    material_modules_by_class: dict[int, list[TeacherModule]] = {}
+    for module in material_modules:
+        if module.class_id is not None:
+            material_modules_by_class.setdefault(module.class_id, []).append(module)
+
+    material_module_ids = [module.id for module in material_modules]
+    material_topics = (
+        db.query(LearningTopic)
+        .filter(LearningTopic.module_id.in_(material_module_ids))
+        .order_by(LearningTopic.sort_order.asc())
+        .all()
+    ) if material_module_ids else []
+    material_topics_by_module: dict[int, list[LearningTopic]] = {}
+    for topic in material_topics:
+        material_topics_by_module.setdefault(topic.module_id, []).append(topic)
+
+    material_checkpoints = (
+        db.query(ModuleCheckpoint)
+        .filter(ModuleCheckpoint.module_id.in_(material_module_ids))
+        .order_by(ModuleCheckpoint.start_sort_order.asc())
+        .all()
+    ) if material_module_ids else []
+    material_checkpoints_by_module: dict[int, list[ModuleCheckpoint]] = {}
+    for checkpoint in material_checkpoints:
+        material_checkpoints_by_module.setdefault(checkpoint.module_id, []).append(checkpoint)
+
+    material_topic_ids = [topic.id for topic in material_topics]
+    material_progress_rows = (
+        db.query(StudentTopicProgress)
+        .filter(
+            StudentTopicProgress.student_id.in_(student_ids),
+            StudentTopicProgress.topic_id.in_(material_topic_ids),
+        )
+        .all()
+    ) if material_topic_ids else []
+    material_progress_by_student_topic = {
+        (progress.student_id, progress.topic_id): progress
+        for progress in material_progress_rows
+    }
+    material_checkpoint_ids = [checkpoint.id for checkpoint in material_checkpoints]
+    checkpoint_attempt_rows = (
+        db.query(StudentCheckpointAttempt)
+        .filter(
+            StudentCheckpointAttempt.student_id.in_(student_ids),
+            StudentCheckpointAttempt.checkpoint_id.in_(material_checkpoint_ids),
+        )
+        .all()
+    ) if material_checkpoint_ids else []
+    checkpoint_attempt_by_student_checkpoint = {
+        (attempt.student_id, attempt.checkpoint_id): attempt
+        for attempt in checkpoint_attempt_rows
+    }
+
+    assessment_filters = []
     activity_filter = (
         (TeacherAssessment.assessment_type == 'activity')
         & (TeacherAssessment.class_id.in_(class_ids))
@@ -652,6 +724,27 @@ def list_teacher_student_records(
     for practice in handsign_rows:
         handsign_by_student.setdefault(practice.student_id, []).append(practice)
 
+    targeted_support_rows = (
+        db.query(RemediationTarget, RemediationIntervention, RemediationActivity)
+        .join(
+            RemediationIntervention,
+            RemediationTarget.intervention_id == RemediationIntervention.id,
+        )
+        .join(
+            RemediationActivity,
+            RemediationIntervention.remediation_activity_id == RemediationActivity.id,
+        )
+        .filter(
+            RemediationTarget.student_id.in_(student_ids),
+            RemediationActivity.module_id.in_(module_ids),
+        )
+        .order_by(RemediationTarget.updated_at.desc())
+        .all()
+    )
+    targeted_support_by_student: dict[int, list[tuple[RemediationTarget, RemediationIntervention, RemediationActivity]]] = {}
+    for target, intervention, activity in targeted_support_rows:
+        targeted_support_by_student.setdefault(target.student_id, []).append((target, intervention, activity))
+
     retake_rows = []
     if assessment_ids and student_ids:
         retake_rows = (
@@ -673,6 +766,62 @@ def list_teacher_student_records(
     records = []
     for student in students:
         summary = _dashboard_progress_for_student(student, classes, db, current_user)
+        matching_class_ids = {
+            teacher_class.id
+            for teacher_class in classes
+            if teacher_class.section_id == student.section_id
+        }
+        material_records = []
+        for matching_class_id in matching_class_ids:
+            for module in material_modules_by_class.get(matching_class_id, []):
+                topics = material_topics_by_module.get(module.id, [])
+                progress_items = [
+                    material_progress_by_student_topic[(student.account_id, topic.id)]
+                    for topic in topics
+                    if (student.account_id, topic.id) in material_progress_by_student_topic
+                ]
+                completed_topics = sum(item.status == 'completed' for item in progress_items)
+                total_topics = len(topics)
+                checkpoints = material_checkpoints_by_module.get(module.id, [])
+                checkpoint_attempts = [
+                    checkpoint_attempt_by_student_checkpoint[(student.account_id, checkpoint.id)]
+                    for checkpoint in checkpoints
+                    if (student.account_id, checkpoint.id) in checkpoint_attempt_by_student_checkpoint
+                ]
+                latest_checkpoint_attempt = max(
+                    checkpoint_attempts,
+                    key=lambda item: item.updated_at or item.completed_at or item.created_at,
+                    default=None,
+                )
+                if total_topics and completed_topics == total_topics:
+                    material_status = 'completed'
+                elif progress_items:
+                    material_status = 'in_progress'
+                else:
+                    material_status = 'not_started'
+                last_updated = max(
+                    (
+                        item.updated_at
+                        or item.completed_at
+                        or getattr(item, 'started_at', None)
+                        or getattr(item, 'created_at', None)
+                        for item in progress_items + checkpoint_attempts
+                    ),
+                    default=None,
+                )
+                material_records.append({
+                    'id': module.id,
+                    'title': module.title,
+                    'completed_topics': completed_topics,
+                    'total_topics': total_topics,
+                    'completed_checkpoints': len(checkpoint_attempts),
+                    'total_checkpoints': len(checkpoints),
+                    'latest_checkpoint_score': latest_checkpoint_attempt.score if latest_checkpoint_attempt else None,
+                    'latest_checkpoint_total': latest_checkpoint_attempt.total if latest_checkpoint_attempt else None,
+                    'percent': round(completed_topics / total_topics * 100) if total_topics else 0,
+                    'status': material_status,
+                    'last_updated': last_updated,
+                })
         assessment_records = []
         student_progress = progress_by_student.get(student.account_id, {})
         for assessment in assessments:
@@ -737,12 +886,30 @@ def list_teacher_student_records(
                 'completed_at': practice.completed_at,
             })
 
+        targeted_support_records = [
+            {
+                'id': target.id,
+                'activity_title': activity.title,
+                'intervention_title': intervention.title,
+                'start_sort_order': intervention.start_sort_order,
+                'end_sort_order': intervention.end_sort_order,
+                'status': target.status,
+                'score': target.score,
+                'total': target.total,
+                'due_at': activity.due_at,
+                'completed_at': target.completed_at,
+            }
+            for target, intervention, activity in targeted_support_by_student.get(student.account_id, [])
+        ]
+
         records.append({
             **summary,
             'grade_level': student.grade_level.name if student.grade_level else None,
             'section': student.section.name if student.section else None,
             'assessments': assessment_records,
             'handsign_practice': handsign_records,
+            'learning_materials': material_records,
+            'targeted_support': targeted_support_records,
         })
 
     return records

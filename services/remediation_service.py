@@ -17,12 +17,15 @@ from models.student_profile import StudentProfile
 from models.teacher_module import TeacherModule
 from schemas.remediation_schema import RemediationActivityCreate
 from services.push_notification_service import send_push_to_accounts
+from services.handsign.dataset_admin_service import week_labels
+from services.handsign.word_frame_scoring_service import assess_frame_sequence
 from utils.enum import RoleEnum, StudentType
-from utils.handsign.science_vocabulary import answers_match
+from utils.handsign.science_vocabulary import answers_match, canonical_word
 from utils.utc_now import utc_now
 
 
 QUESTION_VIDEO_DIR = Path("static/remediation_question_videos")
+REVIEW_VIDEO_DIR = Path("static/remediation_review_videos")
 ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".webm", ".mov", ".avi"}
 MAX_VIDEO_BYTES = 100 * 1024 * 1024
 
@@ -120,6 +123,27 @@ def upload_remediation_question_video(
     return _teacher_activity_dict(_teacher_activity(activity.id, db, current_user), db)
 
 
+def upload_remediation_review_video(
+    activity_id: int,
+    intervention_id: int,
+    video: UploadFile,
+    db: Session,
+    current_user,
+) -> dict:
+    activity = _teacher_activity(activity_id, db, current_user)
+    intervention = next((item for item in activity.interventions if item.id == intervention_id), None)
+    if not intervention:
+        raise HTTPException(status_code=404, detail="Remediation topic group not found")
+
+    destination = _save_video(video, REVIEW_VIDEO_DIR, "Targeted-support review videos")
+    old_path = _review_video_path(intervention.video_url)
+    intervention.video_url = f"/static/remediation_review_videos/{destination.name}"
+    db.commit()
+    if old_path:
+        old_path.unlink(missing_ok=True)
+    return _teacher_activity_dict(_teacher_activity(activity.id, db, current_user), db)
+
+
 def list_student_remediation_activities(db: Session, current_user) -> list[dict]:
     _ensure_student(current_user)
     targets = (
@@ -145,6 +169,41 @@ def get_student_remediation_target(target_id: int, db: Session, current_user) ->
     return _student_target_dict(target, db, include_topics=True)
 
 
+def save_student_remediation_progress(
+    target_id: int,
+    stage: str,
+    topic_index: int,
+    question_index: int,
+    db: Session,
+    current_user,
+) -> dict:
+    _ensure_student(current_user)
+    target = _student_target(target_id, db, current_user)
+    if target.status == "completed":
+        return _student_target_dict(target, db, include_topics=True)
+
+    topic_count = db.query(LearningTopic).filter(
+        LearningTopic.module_id == target.intervention.activity.module_id,
+        LearningTopic.sort_order >= target.intervention.start_sort_order,
+        LearningTopic.sort_order <= target.intervention.end_sort_order,
+    ).count()
+    question_count = len(target.intervention.questions or [])
+    if stage == "review" and topic_index >= max(topic_count, 1):
+        raise HTTPException(status_code=422, detail="Support review topic not found")
+    if stage == "questions" and question_index >= max(question_count, 1):
+        raise HTTPException(status_code=422, detail="Support question not found")
+
+    target.progress = {
+        **(target.progress or {}),
+        "stage": stage,
+        "topic_index": topic_index,
+        "question_index": question_index,
+    }
+    target.status = "in_progress"
+    db.commit()
+    return _student_target_dict(target, db, include_topics=True)
+
+
 def submit_student_remediation_target(target_id: int, answers: dict, db: Session, current_user) -> dict:
     _ensure_student(current_user)
     target = (
@@ -167,6 +226,90 @@ def submit_student_remediation_target(target_id: int, answers: dict, db: Session
     return _student_target_dict(target, db, include_topics=True)
 
 
+def check_student_remediation_sign_answer(
+    target_id: int,
+    question_index: int,
+    answer: str,
+    db: Session,
+    current_user,
+) -> dict:
+    _ensure_student(current_user)
+    target = (
+        db.query(RemediationTarget)
+        .options(joinedload(RemediationTarget.intervention))
+        .filter(RemediationTarget.id == target_id, RemediationTarget.student_id == current_user.id)
+        .first()
+    )
+    if not target:
+        raise HTTPException(status_code=404, detail="Support activity not found")
+    if target.status == "completed":
+        raise HTTPException(status_code=409, detail="This support activity has already been submitted")
+    questions = target.intervention.questions or []
+    if question_index < 0 or question_index >= len(questions):
+        raise HTTPException(status_code=404, detail="Support question not found")
+    question = questions[question_index]
+    if question.get("prompt_type") != "sign_video":
+        raise HTTPException(status_code=422, detail="This question does not use a signed response")
+    return {"correct": answers_match(answer, str(question.get("answer") or ""))}
+
+
+def check_student_remediation_word_gesture(
+    target_id: int,
+    question_index: int,
+    images: list[str],
+    db: Session,
+    current_user,
+) -> dict:
+    """Score one complete word sign against the Admin Word Gesture dataset.
+
+    The expected answer deliberately stays on the server so the student sees only
+    whether their signed response was correct.
+    """
+    _ensure_student(current_user)
+    target = (
+        db.query(RemediationTarget)
+        .options(joinedload(RemediationTarget.intervention))
+        .filter(RemediationTarget.id == target_id, RemediationTarget.student_id == current_user.id)
+        .first()
+    )
+    if not target:
+        raise HTTPException(status_code=404, detail="Support activity not found")
+    if target.status == "completed":
+        raise HTTPException(status_code=409, detail="This support activity has already been submitted")
+    questions = target.intervention.questions or []
+    if question_index < 0 or question_index >= len(questions):
+        raise HTTPException(status_code=404, detail="Support question not found")
+    question = questions[question_index]
+    if question.get("prompt_type") != "sign_video":
+        raise HTTPException(status_code=422, detail="This question does not use a signed response")
+
+    expected_word = str(question.get("answer") or "").strip()
+    if not expected_word:
+        raise HTTPException(status_code=422, detail="This question has no configured Word Gesture answer")
+    try:
+        assessment = assess_frame_sequence(expected_word, images)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    answers = dict(target.answers or {})
+    answers[str(question_index)] = "__WORD_GESTURE_CORRECT__" if assessment["correct"] else "__WORD_GESTURE_INCORRECT__"
+    progress = dict(target.progress or {})
+    checks = dict(progress.get("checks") or {})
+    checks[str(question_index)] = assessment
+    target.answers = answers
+    target.progress = {
+        **progress,
+        "stage": "questions",
+        "question_index": question_index,
+        "checks": checks,
+    }
+    target.status = "in_progress"
+    db.commit()
+    return assessment
+
+
 def _ensure_teacher(current_user) -> None:
     if current_user.role != RoleEnum.teacher:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Teacher only")
@@ -175,6 +318,18 @@ def _ensure_teacher(current_user) -> None:
 def _ensure_student(current_user) -> None:
     if current_user.role != RoleEnum.student:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Student only")
+
+
+def _student_target(target_id: int, db: Session, current_user) -> RemediationTarget:
+    target = (
+        db.query(RemediationTarget)
+        .options(joinedload(RemediationTarget.intervention).joinedload(RemediationIntervention.activity))
+        .filter(RemediationTarget.id == target_id, RemediationTarget.student_id == current_user.id)
+        .first()
+    )
+    if not target:
+        raise HTTPException(status_code=404, detail="Support activity not found")
+    return target
 
 
 def _teacher_module(module_id: int, db: Session, current_user) -> TeacherModule:
@@ -282,6 +437,7 @@ def _teacher_activity_dict(activity: RemediationActivity, db: Session) -> dict:
                 "end_sort_order": item.end_sort_order,
                 "title": item.title,
                 "instructions": item.instructions,
+                "review_video_url": item.video_url,
                 "questions": item.questions or [],
                 "targets": [
                     {
@@ -320,9 +476,12 @@ def _student_target_dict(target: RemediationTarget, db: Session, *, include_topi
         "due_at": activity.due_at,
         "title": intervention.title,
         "instructions": intervention.instructions,
+        "review_video_url": intervention.video_url,
         "start_sort_order": intervention.start_sort_order,
         "end_sort_order": intervention.end_sort_order,
         "questions": questions,
+        "saved_answers": target.answers or {},
+        "progress": target.progress or {},
         "status": target.status,
         "score": target.score,
         "total": target.total,
@@ -339,8 +498,17 @@ def _student_target_dict(target: RemediationTarget, db: Session, *, include_topi
                 "image_url": topic.image_url,
                 "page_image_urls": topic.page_image_urls or [],
                 "sort_order": topic.sort_order,
+                "sign_videos": [
+                    {
+                        "id": video.id,
+                        "title": video.title,
+                        "focus_area": video.focus_area,
+                        "video_url": video.video_url,
+                    }
+                    for video in topic.sign_videos
+                ],
             }
-            for topic in db.query(LearningTopic).filter(
+            for topic in db.query(LearningTopic).options(joinedload(LearningTopic.sign_videos)).filter(
                 LearningTopic.module_id == activity.module_id,
                 LearningTopic.sort_order >= intervention.start_sort_order,
                 LearningTopic.sort_order <= intervention.end_sort_order,
@@ -353,7 +521,11 @@ def _score_questions(questions: list[dict], answers: dict) -> int:
     return sum(
         1
         for index, question in enumerate(questions)
-        if question.get("answer") and answers_match(str(answers.get(str(index), answers.get(index, ""))), question["answer"])
+        if (
+            str(answers.get(str(index), answers.get(index, ""))) == "__WORD_GESTURE_CORRECT__"
+            if question.get("prompt_type") == "sign_video"
+            else question.get("answer") and answers_match(str(answers.get(str(index), answers.get(index, ""))), question["answer"])
+        )
     )
 
 
@@ -388,14 +560,16 @@ def _stored_questions(item, checkpoint: ModuleCheckpoint | None, db: Session) ->
             raise HTTPException(status_code=422, detail="Select at least one student who missed each sign-language source question.")
 
         data["prompt"] = str(source.get("prompt") or "").strip()
-        correct_answer = _answer_text(source_answer)
-        if data.get("question_type") == "multiple_choice":
-            choices = [str(choice).strip() for choice in data.get("options") or []]
-            if correct_answer not in choices:
-                raise HTTPException(status_code=422, detail="Multiple-choice options must include the selected question's correct answer.")
-            data["answer"] = _multiple_choice_answer(choices, correct_answer)
-        else:
-            data["answer"] = correct_answer
+        answer_week = str(data.get("answer_week") or "").strip()
+        selected_answer = canonical_word(str(data.get("answer") or ""))
+        if not answer_week or not selected_answer or selected_answer not in set(week_labels(answer_week, db)):
+            raise HTTPException(
+                status_code=422,
+                detail="Select the signed answer from the Admin dataset for the selected week.",
+            )
+        data["answer"] = selected_answer
+        data["question_type"] = "identification"
+        data["options"] = []
         stored.append(data)
     return stored
 
@@ -459,3 +633,9 @@ def _question_video_path(url: str | None) -> Path | None:
     if not url or not url.startswith("/static/remediation_question_videos/"):
         return None
     return QUESTION_VIDEO_DIR / Path(url).name
+
+
+def _review_video_path(url: str | None) -> Path | None:
+    if not url or not url.startswith("/static/remediation_review_videos/"):
+        return None
+    return REVIEW_VIDEO_DIR / Path(url).name

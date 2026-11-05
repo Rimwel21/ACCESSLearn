@@ -3,13 +3,24 @@ from sqlalchemy.orm import Session
 
 from limiter import limiter
 from models.accounts import Accounts
-from schemas.remediation_schema import RemediationActivityCreate, RemediationActivityOut, RemediationSubmit
+from schemas.remediation_schema import (
+    RemediationActivityCreate,
+    RemediationActivityOut,
+    RemediationAnswerCheck,
+    RemediationProgressUpdate,
+    RemediationSubmit,
+    RemediationWordFrameCheck,
+)
 from services.remediation_service import (
     create_remediation_activity,
     get_student_remediation_target,
+    check_student_remediation_sign_answer,
+    check_student_remediation_word_gesture,
     list_student_remediation_activities,
     list_teacher_remediation_activities,
+    save_student_remediation_progress,
     submit_student_remediation_target,
+    upload_remediation_review_video,
     upload_remediation_question_video,
 )
 from utils.dependencies import get_current_user, get_db
@@ -50,6 +61,20 @@ async def upload_remediation_question_video_route(
     return upload_remediation_question_video(activity_id, intervention_id, question_index, video, db, current_user)
 
 
+@teacher_router.post("/{activity_id}/interventions/{intervention_id}/review-video", response_model=RemediationActivityOut)
+@limiter.limit("10/minute")
+async def upload_remediation_review_video_route(
+    request: Request,
+    activity_id: int,
+    intervention_id: int,
+    video: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: Accounts = Depends(get_current_user),
+):
+    """Fallback guide when this topic group has no Topic Progress sign video."""
+    return upload_remediation_review_video(activity_id, intervention_id, video, db, current_user)
+
+
 @student_router.get("/")
 @limiter.limit("20/minute")
 def list_student_remediation_route(request: Request, db: Session = Depends(get_db), current_user: Accounts = Depends(get_current_user)):
@@ -60,6 +85,56 @@ def list_student_remediation_route(request: Request, db: Session = Depends(get_d
 @limiter.limit("20/minute")
 def get_student_remediation_route(target_id: int, request: Request, db: Session = Depends(get_db), current_user: Accounts = Depends(get_current_user)):
     return get_student_remediation_target(target_id, db, current_user)
+
+
+@student_router.put("/{target_id}/progress")
+@limiter.limit("30/minute")
+def save_student_remediation_progress_route(
+    target_id: int,
+    payload: RemediationProgressUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: Accounts = Depends(get_current_user),
+):
+    return save_student_remediation_progress(target_id, payload.stage, payload.topic_index, payload.question_index, db, current_user)
+
+
+@student_router.post("/{target_id}/questions/{question_index}/check")
+@limiter.limit("30/minute")
+def check_student_remediation_question_route(
+    target_id: int,
+    question_index: int,
+    payload: RemediationAnswerCheck,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: Accounts = Depends(get_current_user),
+):
+    return check_student_remediation_sign_answer(
+        target_id=target_id,
+        question_index=question_index,
+        answer=payload.answer,
+        db=db,
+        current_user=current_user,
+    )
+
+
+@student_router.post("/{target_id}/questions/{question_index}/word-check")
+@limiter.limit("10/minute")
+def check_student_remediation_word_question_route(
+    target_id: int,
+    question_index: int,
+    payload: RemediationWordFrameCheck,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: Accounts = Depends(get_current_user),
+):
+    return check_student_remediation_word_gesture(
+        target_id=target_id,
+        question_index=question_index,
+        images=payload.images,
+        db=db,
+        current_user=current_user,
+    )
 
 
 @student_router.post("/{target_id}/submit")
