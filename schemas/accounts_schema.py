@@ -92,6 +92,28 @@ class AccountLogin(BaseModel):
     password: str = Field(min_length=8, max_length=72)
     role: RoleEnum | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_identifier(cls, data):
+        if not isinstance(data, dict):
+            return data
+
+        normalized = dict(data)
+        for field in ("username", "email"):
+            value = normalized.get(field)
+            if isinstance(value, str):
+                value = value.strip()
+                if re.search(r"[\x00-\x1f\x7f]", value):
+                    raise ValueError(f"{field} contains invalid control characters")
+                normalized[field] = value
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_identifier_choice(self):
+        if bool(self.username) == bool(self.email):
+            raise ValueError("Provide exactly one username or email")
+        return self
+
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str

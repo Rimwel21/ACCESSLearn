@@ -3,6 +3,7 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from jose import jwt, JWTError, ExpiredSignatureError
+from auth.account_auth import ACCESS_TOKEN_TYPE
 from core.config import settings
 from models.accounts import Accounts
 from services.audit_service import write_log
@@ -32,7 +33,7 @@ def get_current_user(request: Request, credentials: HTTPAuthorizationCredentials
 
         user_id = payload.get("sub")
 
-        if not user_id:
+        if not user_id or payload.get("token_type") != ACCESS_TOKEN_TYPE:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Token")
         
         user_id = int(user_id)

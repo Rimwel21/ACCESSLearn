@@ -6,7 +6,7 @@ from models.accounts import Accounts
 from models.student_profile import StudentProfile
 from models.teacher_profile import TeacherProfile
 from schemas.accounts_schema import TokenResponse
-from auth.account_auth import create_access_token
+from auth.account_auth import REFRESH_TOKEN_TYPE, create_access_token
 from core.config import settings
 from utils.enum import AccountStatusEnum, RoleEnum, VerificationStatus
 
@@ -28,7 +28,7 @@ def refresh_token(request: Request, db: Session = Depends(get_db)):
 
         user_id = payload.get("sub")
 
-        if not user_id:
+        if not user_id or payload.get("token_type") != REFRESH_TOKEN_TYPE:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
         
         user_id = int(user_id)

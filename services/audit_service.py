@@ -6,6 +6,7 @@ with rich filtering and export support.
 """
 from __future__ import annotations
 import json
+import re
 from datetime import datetime
 from typing import Optional
 from fastapi import Request
@@ -14,6 +15,46 @@ from sqlalchemy.orm import Session
 from models.audit_log import AuditLog
 from repositories.audit_log_repository import AuditLogRepository
 from utils.enum import AuditActionEnum, RoleEnum
+
+
+_SENSITIVE_KEY_PARTS = (
+    "password",
+    "token",
+    "secret",
+    "authorization",
+    "cookie",
+    "otp",
+    "api_key",
+    "apikey",
+)
+_SECRET_TEXT_PATTERN = re.compile(
+    r"(?i)\b(password|token|secret|otp|api[_-]?key)\s*[:=]\s*([^\s,;]+)"
+)
+_BEARER_PATTERN = re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+")
+
+
+def _is_sensitive_key(key: object) -> bool:
+    normalized = str(key).strip().lower().replace("-", "_")
+    return any(part in normalized for part in _SENSITIVE_KEY_PARTS)
+
+
+def _redact_structured_value(value):
+    if isinstance(value, dict):
+        return {
+            str(key): "[REDACTED]" if _is_sensitive_key(key) else _redact_structured_value(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_redact_structured_value(item) for item in value]
+    return value
+
+
+def _safe_log_text(value: Optional[str], max_length: int) -> Optional[str]:
+    if value is None:
+        return None
+    sanitized = _BEARER_PATTERN.sub("Bearer [REDACTED]", str(value))
+    sanitized = _SECRET_TEXT_PATTERN.sub(lambda match: f"{match.group(1)}=[REDACTED]", sanitized)
+    return sanitized[:max_length]
 
 
 def _parse_ua(user_agent: str) -> tuple[str, str, str]:
@@ -75,8 +116,8 @@ def write_log(
     ua_raw  = None
 
     if request:
-        ip = request.client.host if request.client else None
-        ua_raw = request.headers.get("user-agent", "")
+        ip = _safe_log_text(request.client.host if request.client else None, 50)
+        ua_raw = _safe_log_text(request.headers.get("user-agent", ""), 512)
         browser, os_name, device = _parse_ua(ua_raw)
 
     log = AuditLog(
@@ -84,14 +125,14 @@ def write_log(
         role            = actor_role,
         module          = module,
         action          = action,
-        affected_record = affected_record,
-        old_value       = json.dumps(old_value)   if old_value else None,
-        new_value       = json.dumps(new_value)   if new_value else None,
+        affected_record = _safe_log_text(affected_record, 255),
+        old_value       = json.dumps(_redact_structured_value(old_value)) if old_value else None,
+        new_value       = json.dumps(_redact_structured_value(new_value)) if new_value else None,
         old_section_id  = old_section_id,
         new_section_id  = new_section_id,
         old_teacher_id  = old_teacher_id,
         new_teacher_id  = new_teacher_id,
-        reason          = reason,
+        reason          = _safe_log_text(reason, 2000),
         ip_address      = ip,
         user_agent      = ua_raw,
         browser         = browser,

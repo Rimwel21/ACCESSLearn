@@ -3,6 +3,12 @@ venv/
 
 #environment variables
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
 
 # Python cache
 __pycache__/
@@ -14,6 +20,8 @@ __pycache__/
 *.db
 *.sqlite3
 database/*.db
+backups/
+*.bak
 
 # Alembic
 alembic/versions/__pycache__/

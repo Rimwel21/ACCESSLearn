@@ -1,3 +1,4 @@
+import json
 import unittest
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
@@ -7,19 +8,22 @@ from fastapi import HTTPException, Request, Response, UploadFile
 from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.testclient import TestClient
 from jose import jwt
+from pydantic import ValidationError
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from starlette.datastructures import Headers
 
 import models  # noqa: F401 - register all mapped tables
-from auth.account_auth import create_access_token, hash_password
+from auth.account_auth import create_access_token, create_refresh_token, hash_password
 from core.config import settings
 from database.connection import Base
 from main import app
 from models.accounts import Accounts
 from models.audit_log import AuditLog
+from routes.refresh_token import refresh_token as refresh_access_token
 from schemas.accounts_schema import AccountLogin
+from services.audit_service import write_log
 from services.auth_service import user_login
 from services.teacher_module_service import _validate_material_file
 from utils.admin_guard import require_admin
@@ -39,6 +43,24 @@ def request_for(path: str = "/security-test") -> Request:
         "raw_path": path.encode(),
         "query_string": b"",
         "headers": [(b"user-agent", b"security-test")],
+        "client": ("127.0.0.1", 12345),
+        "server": ("testserver", 443),
+    })
+
+
+def request_with_refresh_cookie(token: str) -> Request:
+    return Request({
+        "type": "http",
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "https",
+        "path": "/api/refresh",
+        "raw_path": b"/api/refresh",
+        "query_string": b"",
+        "headers": [
+            (b"cookie", f"refresh_token={token}".encode()),
+            (b"user-agent", b"security-test"),
+        ],
         "client": ("127.0.0.1", 12345),
         "server": ("testserver", 443),
     })
@@ -92,6 +114,95 @@ class SecurityControlTests(unittest.TestCase):
         for weak in ("password", "onlyletters", "12345678", " Space123", "Space 123"):
             with self.subTest(password=weak), self.assertRaises(ValueError):
                 validate_new_password(weak)
+
+    def test_login_identifier_is_normalized_and_requires_one_choice(self):
+        login = AccountLogin(
+            username="  learner1  ",
+            password="StrongPass123",
+            role=RoleEnum.student,
+        )
+        self.assertEqual(login.username, "learner1")
+
+        invalid_payloads = [
+            {"password": "StrongPass123", "role": RoleEnum.student},
+            {
+                "username": "learner1",
+                "email": "learner@example.com",
+                "password": "StrongPass123",
+                "role": RoleEnum.student,
+            },
+            {"username": "learn\x00er", "password": "StrongPass123", "role": RoleEnum.student},
+        ]
+        for payload in invalid_payloads:
+            with self.subTest(payload=payload), self.assertRaises(ValidationError):
+                AccountLogin(**payload)
+
+    def test_access_and_refresh_tokens_cannot_be_substituted(self):
+        student = self.account(RoleEnum.student, username="tokenstudent")
+        access_token = create_access_token({"sub": str(student.id), "role": student.role.value})
+        refresh_token = create_refresh_token({"sub": str(student.id)})
+
+        access_claims = jwt.decode(access_token, settings.secret_key, algorithms=[settings.algorithm])
+        refresh_claims = jwt.decode(refresh_token, settings.secret_key, algorithms=[settings.algorithm])
+        self.assertEqual(access_claims["token_type"], "access")
+        self.assertEqual(refresh_claims["token_type"], "refresh")
+
+        with self.assertRaises(HTTPException) as bearer_rejected:
+            get_current_user(
+                request_for(),
+                HTTPAuthorizationCredentials(scheme="Bearer", credentials=refresh_token),
+                self.db,
+            )
+        self.assertEqual(bearer_rejected.exception.status_code, 401)
+
+        with self.assertRaises(HTTPException) as cookie_rejected:
+            refresh_access_token(request_with_refresh_cookie(access_token), self.db)
+        self.assertEqual(cookie_rejected.exception.status_code, 401)
+
+        refreshed = refresh_access_token(request_with_refresh_cookie(refresh_token), self.db)
+        refreshed_claims = jwt.decode(
+            refreshed["access_token"],
+            settings.secret_key,
+            algorithms=[settings.algorithm],
+        )
+        self.assertEqual(refreshed_claims["token_type"], "access")
+
+    def test_audit_log_redacts_secrets_and_bounds_request_metadata(self):
+        long_user_agent = "client/1.0 " + "x" * 700
+        request = Request({
+            "type": "http",
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "https",
+            "path": "/security-test",
+            "raw_path": b"/security-test",
+            "query_string": b"",
+            "headers": [(b"user-agent", long_user_agent.encode())],
+            "client": ("127.0.0.1", 12345),
+            "server": ("testserver", 443),
+        })
+        write_log(
+            self.db,
+            module="Authentication",
+            action=AuditActionEnum.login_failed,
+            affected_record="token=raw-token-value",
+            old_value={
+                "password": "PlaintextPass123",
+                "nested": {"access_token": "signed-token", "safe": "kept"},
+            },
+            reason="Authorization failed: Bearer signed-token",
+            request=request,
+            status="failed",
+        )
+
+        entry = self.db.query(AuditLog).one()
+        stored = json.loads(entry.old_value)
+        self.assertEqual(stored["password"], "[REDACTED]")
+        self.assertEqual(stored["nested"]["access_token"], "[REDACTED]")
+        self.assertEqual(stored["nested"]["safe"], "kept")
+        self.assertNotIn("raw-token-value", entry.affected_record)
+        self.assertNotIn("signed-token", entry.reason)
+        self.assertLessEqual(len(entry.user_agent), 512)
 
     def test_login_success_and_failed_attempts_are_audited(self):
         student = self.account(RoleEnum.student, username="learner1")
