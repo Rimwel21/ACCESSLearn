@@ -21,6 +21,7 @@ def get_db():
 oauth2_scheme = HTTPBearer()
 
 def get_current_user(request: Request, credentials: HTTPAuthorizationCredentials = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    """Cybersecurity Plan §3.3 / Appendix A.2: validate access-token purpose and active account state."""
 
     token = credentials.credentials
 

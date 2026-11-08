@@ -3,6 +3,9 @@ Admin guard dependency.
 
 Raises HTTP 403 if the authenticated user is not an admin.
 Use as: current_user: Accounts = Depends(require_admin)
+
+Cybersecurity Plan §3.3 / Appendix A.2: this backend dependency is the
+authorization control; hiding an Administrator link in Vue is not sufficient.
 """
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session

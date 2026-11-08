@@ -26,6 +26,8 @@ def account_register(request:Request, user: AccountRegister, db: Session = Depen
 
 # Account Login routes
 @router.post("/account/login", response_model=TokenResponse)
+# Cybersecurity Plan §3.3 / Appendix A.1: IP-based throttling blocks the sixth
+# login request within one minute and is verified in test_security_controls.py.
 @limiter.limit("5/minute")
 def account_login(request:Request, user: AccountLogin, response: Response, db: Session = Depends(get_db)):
     Access_permission = user_login(

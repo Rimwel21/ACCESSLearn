@@ -145,6 +145,7 @@ def user_registration(request: Request, user: AccountRegister, db: Session):
     return new_account
 
 def user_login(request: Request, user: AccountLogin, response: Response, db: Session):
+    """Cybersecurity Plan §3.3 / Appendix A.1: verify credentials, role, and account status server-side."""
     if not user.username and not user.email:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

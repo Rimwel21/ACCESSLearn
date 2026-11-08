@@ -51,6 +51,8 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="stat
 app.state.limiter = limiter
 app.add_middleware(SlowAPIMiddleware)
 
+# Cybersecurity Plan §3.3 / Appendix A.1: return a generic 429 response so
+# automated request spam is throttled without revealing account information.
 @app.exception_handler(RateLimitExceeded)
 async def custom_limit_handler(request: Request, exc: RateLimitExceeded):
     return JSONResponse(
@@ -79,6 +81,8 @@ app.add_middleware(
 )
 
 
+# Cybersecurity Plan §3.4 / Appendix A.6: API response headers provide browser
+# defense in depth; the separately hosted Vue application still needs its own CSP.
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
     response = await call_next(request)

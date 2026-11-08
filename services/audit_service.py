@@ -17,6 +17,8 @@ from repositories.audit_log_repository import AuditLogRepository
 from utils.enum import AuditActionEnum, RoleEnum
 
 
+# Cybersecurity Plan §5 / Appendix A.5: audit evidence must not retain common
+# password, token, cookie, OTP, or provider-secret fields.
 _SENSITIVE_KEY_PARTS = (
     "password",
     "token",
@@ -109,6 +111,7 @@ def write_log(
     request:         Optional[Request] = None,
     status:          str             = "success",
 ) -> AuditLog:
+    """Record a bounded, redacted audit event as described in Appendix A.5."""
     ip = None
     browser = None
     os_name = None

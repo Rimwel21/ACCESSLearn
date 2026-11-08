@@ -367,6 +367,7 @@ def download_teacher_module_file(request: Request, module_id: int, db: Session, 
 
 
 def _validate_material_file(material_file: UploadFile, expected_content_type: str | None = None):
+    """Plan §3.4 / Appendix A.4: validate extension, MIME type, size, and signature before saving."""
     filename = material_file.filename or ""
     extension = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
 

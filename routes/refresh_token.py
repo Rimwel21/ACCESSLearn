@@ -14,6 +14,7 @@ router = APIRouter(prefix="/api", tags=["RefreshToken"])
 
 @router.post("/refresh", response_model=TokenResponse)
 def refresh_token(request: Request, db: Session = Depends(get_db)):
+    """Cybersecurity Plan §3.3 / Appendix A.3: accept only refresh-purpose tokens from the protected cookie."""
     token = request.cookies.get("refresh_token")
 
     if not token:
@@ -73,6 +74,8 @@ def refresh_token(request: Request, db: Session = Depends(get_db)):
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 def logout(response: Response):
+    # Appendix A.3: deleting the refresh cookie is implemented; server-side
+    # revocation and complete device-state cleanup remain documented future work.
     response.delete_cookie(
         key="refresh_token",
         path="/api/refresh",
