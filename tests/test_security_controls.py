@@ -27,7 +27,7 @@ from services.audit_service import write_log
 from services.auth_service import user_login
 from services.teacher_module_service import _validate_material_file
 from utils.admin_guard import require_admin
-from utils.dependencies import get_current_user
+from utils.dependencies import get_current_user, get_db
 from utils.enum import AccountStatusEnum, AuditActionEnum, RoleEnum, VerificationStatus
 from utils.password_policy import validate_new_password
 from utils.teacher_guard import require_teacher
@@ -303,6 +303,30 @@ class SecurityControlTests(unittest.TestCase):
         logout_response = client.post("/api/logout")
         self.assertEqual(logout_response.status_code, 204)
         self.assertIn("refresh_token=", logout_response.headers["set-cookie"])
+
+    def test_login_rate_limit_blocks_sixth_attempt_with_safe_message(self):
+        def override_get_db():
+            yield self.db
+
+        app.dependency_overrides[get_db] = override_get_db
+        try:
+            client = TestClient(app, client=("rate-limit-test", 50000))
+            payload = {
+                "username": "unknown-user",
+                "password": "Incorrect123",
+                "role": "student",
+            }
+
+            responses = [client.post("/auth/account/login", json=payload) for _ in range(6)]
+
+            self.assertTrue(all(response.status_code == 401 for response in responses[:5]))
+            self.assertEqual(responses[5].status_code, 429)
+            self.assertEqual(
+                responses[5].json(),
+                {"detail": "Too many requests. Please try again later."},
+            )
+        finally:
+            app.dependency_overrides.pop(get_db, None)
 
     def test_production_cookie_setting_is_secure(self):
         original_environment = settings.environment
