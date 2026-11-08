@@ -37,6 +37,12 @@ from core.config import settings
 
 logger = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).resolve().parent
+API_CONTENT_SECURITY_POLICY = (
+    "default-src 'none'; "
+    "base-uri 'none'; "
+    "frame-ancestors 'none'; "
+    "form-action 'none'"
+)
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
@@ -80,6 +86,12 @@ async def add_security_headers(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "no-referrer"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+
+    # API and static responses do not need to execute active browser content.
+    # Keep FastAPI's interactive documentation usable in local development;
+    # the deployed frontend host must define and verify its own CSP separately.
+    if request.url.path not in {"/docs", "/redoc", "/openapi.json"}:
+        response.headers["Content-Security-Policy"] = API_CONTENT_SECURITY_POLICY
 
     if request.url.path.startswith(("/auth", "/otp", "/api")):
         response.headers["Cache-Control"] = "no-store"

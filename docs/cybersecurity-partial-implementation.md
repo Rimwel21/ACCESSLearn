@@ -33,3 +33,5 @@ Production PostgreSQL/Supabase backup scheduling and restore testing must be con
 - Token separation, role checks, and login validation partially align with OWASP authentication, identification, and access-control guidance.
 - Secret redaction, audit logging, and backup procedures partially align with ISO/IEC 27002 controls for logging, information backup, access control, and incident management.
 - Data minimization in logs and the incident procedure support principles relevant to the Philippine Data Privacy Act, but legal compliance has not been independently assessed.
+- SIGNHEAR does not process payment-card data in its documented scope, so PCI DSS is not currently applicable.
+- NSE 1–3 concepts reflected in the design include the threat landscape, confidentiality/integrity/availability, social engineering, malware awareness, defense in depth, and firewall/WAF placement. This is not a claim that Fortinet products or certification are part of the deployment.

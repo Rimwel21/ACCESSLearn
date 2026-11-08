@@ -136,7 +136,7 @@ A WAF and reverse proxy supplement application controls; they do not replace bac
 | C2 Account protection | Individual accounts, bcrypt hashing, password rules, login rate limit, OTP-supported recovery | Partly implemented | Staff MFA, compromised-password screening, Argon2id migration evaluation |
 | C3 Session management | Expiring JWTs, HttpOnly refresh cookie, secure production-cookie setting, token-purpose separation, logout cookie deletion | Partly implemented | Remove access token from local storage; rotation, revocation, issuer/audience, inactivity and absolute limits, CSRF design |
 | C4 Network and transport | Restricted CORS configuration and production HSTS option | Partly implemented | Verify HTTPS, proxy/WAF, database-network restrictions, least-privilege production credentials |
-| C5 Browser security | X-Content-Type-Options, X-Frame-Options, Referrer-Policy, Permissions-Policy, selected no-store responses | Partly implemented | CSP; frontend-host header verification; camera policy validation |
+| C5 Browser security | API CSP baseline, X-Content-Type-Options, X-Frame-Options, Referrer-Policy, Permissions-Policy, selected no-store responses | Partly implemented | Frontend-host CSP/header verification; camera policy validation |
 | C6 Input/output handling | Pydantic validation, SQLAlchemy bound queries, login normalization, safe error responses | Partly implemented | Complete input/output and stored-content review |
 | C7 Upload protection | Extension, MIME, signature and size checks; server-generated filenames on selected uploads | Partly implemented | Quarantine, malware scanning, private-delivery review |
 | C8 Encryption and secrets | Environment-based secrets and expanded ignore rules | Partly implemented | Rotation procedure, secret manager, backup encryption verification |
@@ -164,7 +164,7 @@ The target JWT validation should include signature, explicitly permitted algorit
 
 ### 3.4 HTTP, validation and upload controls
 
-The backend currently applies `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, selected `Cache-Control: no-store`, and optional production HSTS. CSP has not been implemented. Headers served by the frontend host or deployment proxy require separate verification.
+The backend currently applies an API-focused Content Security Policy (`default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'`), `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, selected `Cache-Control: no-store`, and optional production HSTS. FastAPI's local interactive documentation is excluded from the API CSP so its required development assets continue to work. The Vue frontend host or deployment proxy must define and verify a separate frontend-compatible CSP.
 
 Backend schemas validate selected types, lengths, ranges, required fields, and allowed values. SQLAlchemy is used for bound database operations. Login identifiers are trimmed, control characters are rejected, and exactly one username or email is required in the local feature branch.
 
@@ -176,7 +176,26 @@ The custom service worker caches the application shell and static assets and byp
 
 Database credentials, JWT keys, provider credentials, and other secrets must remain server-side. `.env`, private-key formats, and local backup files are excluded from version control in the feature branch. Dependency scanning, secret scanning, and model/dataset integrity hashes remain planned.
 
-## 4. Privacy and Data Protection
+## 4. Standards, Compliance and Governance
+
+### 4.1 ISO/IEC 27002 alignment
+
+This mapping demonstrates design alignment only; it is not an ISO certification or a complete control audit.
+
+| SIGNHEAR control | ISO/IEC 27002:2022 theme | Current evidence | Remaining work |
+|---|---|---|---|
+| Role, ownership and class authorization | Identity management and access control | Backend authentication, account-status checks and role guards | Complete endpoint-by-endpoint authorization review |
+| Password and session protection | Authentication information and secure authentication | bcrypt password hashing, expiring JWTs, protected refresh cookie and token-purpose separation | MFA, safer browser storage, rotation, revocation and absolute/inactivity limits |
+| Audit logging and secret redaction | Logging, monitoring activities and protection of records | Selected authentication/administrative events and redacted bounded metadata | Central alerts, protected retention and formal log review procedure |
+| Input and upload validation | Secure coding and application-security requirements | Pydantic validation, SQLAlchemy bound expressions, extension/MIME/signature/size checks | Malware scanning, quarantine and complete stored-content review |
+| Backup and restoration | Information backup and ICT readiness for continuity | Documented local SQLite copy and isolated-restore procedure | Encrypted production schedule, RPO/RTO and recorded restoration exercise |
+| Incident response | Incident management planning, assessment and response | Documented detection, containment, recovery, reporting and corrective-action process | Approved contact list, exercise, evidence-retention rules and provider escalation paths |
+
+### 4.2 PCI DSS applicability
+
+SIGNHEAR does not process, store or transmit payment-card data in its documented scope. PCI DSS is therefore not applicable to the current system. If payment functionality is introduced later, the project owner must reassess scope before deployment and must not reuse this non-applicability statement.
+
+### 4.3 Privacy and data protection
 
 Learner age, education records, and health or accessibility-related information can qualify as sensitive personal information under Republic Act No. 10173. Processing must follow transparency, legitimate purpose, proportionality, data minimization, accuracy, limited retention, and appropriate safeguards.
 
@@ -192,6 +211,17 @@ Before production, the school or authorized project owner should document:
 
 Not every technical error is automatically a legally notifiable personal-data breach. The authorized privacy contact must assess the incident and, where mandatory-notification criteria apply, follow the applicable National Privacy Commission timeline and requirements.
 
+### 4.4 Fortinet NSE 1–3 concepts applied
+
+The assignment's NSE 1–3 tie-in is reflected through the following cybersecurity-fundamentals concepts. These are design influences, not a claim that Fortinet products are deployed or that certification has been awarded:
+
+- the threat-landscape and attack-surface concepts inform the SIGNHEAR asset inventory and risk register;
+- confidentiality, integrity and availability guide protection of learner records, scores, learning materials and service continuity;
+- social-engineering and credential-theft concepts support individual accounts, password protection, rate limiting, staff MFA as future work and user-awareness recommendations;
+- malware and malicious-content concepts support upload validation and the planned quarantine/scanning workflow;
+- defense in depth supports combining backend authorization, validation, browser headers, restricted CORS, audit logging, backups and a proposed WAF/reverse proxy; and
+- firewall and network-security concepts inform the proposed placement of a WAF/reverse proxy at the public boundary while preserving application-level authorization.
+
 ## 5. Backup, Recovery and Incident Response
 
 ### 5.1 Verified local procedure
@@ -204,6 +234,16 @@ Production PostgreSQL/Supabase backup scheduling, encryption, retention, access,
 
 ### 5.3 Minimal incident process
 
+Detection sources include failed-login and authorization events, Administrator Audit Log records, unexpected server errors, upload failures, account-status changes and reports from users or service providers. Centralized alerting is not yet verified, so the designated Administrator must review available evidence and escalate suspicious patterns.
+
+| Role | Incident responsibility |
+|---|---|
+| Reporter or school user | Stop the affected activity, preserve what was observed and notify the designated Administrator without sharing passwords or tokens |
+| SIGNHEAR Administrator | Record the incident, restrict affected accounts, preserve audit evidence and coordinate technical containment |
+| Development/technical owner | Investigate affected code and services, rotate exposed secrets when authorized, restore from verified backups and validate corrective changes |
+| School/project owner | Approve high-impact containment, coordinate service-provider actions and decide when learning operations may safely resume |
+| Authorized privacy or data-protection contact | Assess personal-data impact and determine applicable institutional or National Privacy Commission reporting obligations |
+
 1. Record the time, affected function, account, and observed behavior without copying passwords or tokens.
 2. Preserve relevant audit and operational evidence with restricted access.
 3. Contain the incident by suspending affected accounts, disabling exposed integration keys, or isolating affected services as authorized.
@@ -213,6 +253,8 @@ Production PostgreSQL/Supabase backup scheduling, encryption, retention, access,
 7. Escalate possible personal-data breaches to the authorized school/privacy contact for legal assessment and notification.
 8. Record corrective actions and reassess residual risk.
 
+The incident record should include a unique reference, detection time, reporter, affected assets and accounts, observed indicators, containment actions, evidence locations, notifications, recovery validation, residual risk, responsible owners and closure approval. Store the record in an access-controlled location; the public application and ordinary learner accounts must not expose it.
+
 ## 6. Testing and Evidence
 
 The local feature branch contains automated tests for authentication, authorization, input validation, token-purpose separation, audit-log redaction, security headers, cookie settings, material-upload validation, account blocking, invalid/expired tokens, progress-monitoring isolation, retakes, deadlines, and a complete 35-student progress roster.
@@ -221,20 +263,22 @@ Latest authorized local result: **20 tests passed, 0 failed**. Python compilatio
 
 ## 7. Cybersecurity Checklist
 
-| Area | Rating | Evidence and limitation |
-|---|---|---|
-| A. System and Assets | Partly | Architecture and sensitive assets are identified; no approved complete asset register exists |
-| B. Authentication and Access Control | Partly | Password hashing, status checks, rate limits, role guards, login validation and token-purpose checks exist; MFA and complete authorization review remain |
-| C. Session Management | Partly | Expiration and protected refresh cookie exist; local-storage access token, no rotation/revocation, and no absolute/inactivity limits remain |
-| D. Input Handling and Data Protection | Partly | Schema validation, bound queries, upload checks and log redaction exist; complete content/data-flow review remains |
-| E. Configuration, Components and Network | Partly | Environment secrets, restricted CORS, headers and ignore rules exist; deployment TLS/WAF and dependency scans are unverified |
-| F. Logging, Backup and Incident Response | Partly | Audit events, redaction and local procedures exist; production backups, alerts and exercises are unverified |
-| G. Standards and Compliance | Partly | Controls are mapped to OWASP, ISO/IEC 27002 and Philippine privacy principles; no formal compliance or legal assessment exists |
-| H. Testing and Evidence | Yes for the defined local scope | 20 automated tests passed; deployed-environment and penetration testing remain outside the evidence scope |
+| Area | Yes | Partly | No | Evidence and limitation |
+|---|:---:|:---:|:---:|---|
+| A. System and Assets |  | ✓ |  | Architecture and sensitive assets are identified; no approved complete asset register exists |
+| B. Authentication and Access Control |  | ✓ |  | Password hashing, status checks, rate limits, role guards, login validation and token-purpose checks exist; MFA and complete authorization review remain |
+| C. Session Management |  | ✓ |  | Expiration and protected refresh cookie exist; local-storage access token, no rotation/revocation, and no absolute/inactivity limits remain |
+| D. Input Handling and Data Protection |  | ✓ |  | Schema validation, bound queries, upload checks and log redaction exist; complete content/data-flow review remains |
+| E. Configuration, Components and Network |  | ✓ |  | Environment secrets, restricted CORS, API CSP baseline, other headers and ignore rules exist; frontend-host CSP, deployment TLS/WAF and dependency scans are unverified |
+| F. Logging, Backup and Incident Response |  | ✓ |  | Audit events, redaction and local procedures exist; production backups, alerts and exercises are unverified |
+| G. Standards and Compliance |  | ✓ |  | Controls are mapped to OWASP, six ISO/IEC 27002 themes, Philippine privacy principles and NSE 1–3 concepts; PCI DSS is documented as not applicable; no formal certification or legal assessment exists |
+| H. Testing and Evidence | ✓* |  |  | 20 automated tests passed; deployed-environment and penetration testing remain outside the evidence scope |
+
+\*The Yes rating for H applies only to the defined local automated-test scope. It is not evidence of penetration testing or production-environment verification.
 
 ## 8. Remaining Work and Approval
 
-Highest-priority future work includes removing access tokens and private learner data from inappropriate persistent browser storage, implementing refresh-token rotation/revocation, adding staff MFA, verifying production HTTPS/CORS/header behavior, adding CSP, conducting dependency and secret scans, implementing protected production backup/restoration exercises, and completing formal privacy and endpoint-authorization reviews.
+Highest-priority future work includes removing access tokens and private learner data from inappropriate persistent browser storage, implementing refresh-token rotation/revocation, adding staff MFA, verifying the frontend-host CSP and production HTTPS/CORS/header behavior, conducting dependency and secret scans, implementing protected production backup/restoration exercises, and completing formal privacy and endpoint-authorization reviews.
 
 Residual risk must be reviewed and accepted by the authorized school/project owner before production use. A high rating should be reduced only when implementation and verification evidence supports the change.
 

@@ -155,12 +155,13 @@ In the browser Network panel, select an API response and point only to header na
 - `X-Frame-Options: DENY`
 - `Referrer-Policy: no-referrer`
 - `Permissions-Policy`
+- `Content-Security-Policy` on backend API responses
 - `Cache-Control: no-store` on selected authentication/private API paths
 - HSTS when production HTTPS configuration enables it
 
 Say:
 
-> These headers reduce content-type confusion, framing, referrer leakage, unnecessary browser capabilities, and caching of selected sensitive responses. CSP and complete frontend-host header verification remain unfinished.
+> These headers reduce content-type confusion, framing, referrer leakage, unnecessary browser capabilities, and caching of selected sensitive responses. The backend API now has a restrictive CSP baseline. A separate frontend-compatible CSP and complete production-host header verification remain unfinished.
 
 ### Step 8 — Automated testing evidence (2 minutes)
 
@@ -264,7 +265,7 @@ Close with:
 ## 6. What not to claim or demonstrate
 
 - Do not say every control is implemented or every checklist category is Yes.
-- Do not call WAF, CSP, staff MFA, malware scanning, refresh rotation, automated production backup, or production alerting implemented without separate evidence.
+- Do not call WAF, frontend-host CSP, staff MFA, malware scanning, refresh rotation, automated production backup, or production alerting implemented without separate evidence.
 - Do not show `.env`, JWT values, cookies, real learner data, real passwords, API keys, database URLs, or guardian information.
 - Do not run destructive attacks or upload actual malicious content.
 - Do not change High risks to Medium merely to make the system appear safer.

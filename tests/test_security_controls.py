@@ -294,6 +294,10 @@ class SecurityControlTests(unittest.TestCase):
         self.assertEqual(response.headers["x-content-type-options"], "nosniff")
         self.assertEqual(response.headers["x-frame-options"], "DENY")
         self.assertEqual(response.headers["referrer-policy"], "no-referrer")
+        self.assertEqual(
+            response.headers["content-security-policy"],
+            "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
+        )
         self.assertEqual(response.headers["cache-control"], "no-store")
 
         logout_response = client.post("/api/logout")
