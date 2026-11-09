@@ -261,6 +261,7 @@ class AuditLogOut(BaseModel):
     location:        Optional[str]
     status:          str
     created_at:      datetime
+    severity:        Optional[str] = "low" 
 
     class Config:
         from_attributes = True

@@ -32,6 +32,7 @@ from services.handsign.prediction_service import PredictionService
 from services.schema_maintenance import ensure_academic_tables
 from routes.otp_route import router as otp_router
 from routes.admin_approval_route import router as admin_approval
+from routes.backup_route import router as backup_router
 from limiter import limiter
 from core.config import settings
 
@@ -169,6 +170,7 @@ app.include_router(section_create)
 app.include_router(push_notifications)
 app.include_router(teacher_remediation_router)
 app.include_router(student_remediation_router)
+app.include_router(backup_router)
 
 
 @app.on_event("startup")

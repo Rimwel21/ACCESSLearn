@@ -93,11 +93,36 @@ def _parse_ua(user_agent: str) -> tuple[str, str, str]:
     return browser, os_name, device
 
 
+def get_event_severity(action: AuditActionEnum | str, status: str = "success") -> str:
+    """Calculate normalized severity: critical, high, medium, or low."""
+    act = action.value if isinstance(action, AuditActionEnum) else str(action).lower()
+    stat = str(status).lower()
+    
+    if act in {"restore_failed", "restore_started", "restore_approved", "hard_deleted"}:
+        return "critical"
+    if stat == "failed" and act in {"access_denied", "restore_validation_failed"}:
+        return "critical"
+        
+    if act in {"access_denied", "login_failed", "backup_failed", "restore_validation_failed"}:
+        return "high"
+    if stat == "failed":
+        return "high"
+        
+    if act in {
+        "backup_requested", "restore_requested", "password_reset_requested",
+        "password_reset_completed", "created", "updated", "assigned", "archived",
+        "restored", "transferred", "bulk_action", "deactivated", "activated"
+    }:
+        return "medium"
+        
+    return "low"
+
+
 def write_log(
     db:              Session,
     *,
     module:          str,
-    action:          AuditActionEnum,
+    action:          AuditActionEnum | str,
     actor_id:        Optional[int]   = None,
     actor_role:      Optional[RoleEnum] = None,
     affected_record: Optional[str]   = None,
@@ -112,6 +137,13 @@ def write_log(
     status:          str             = "success",
 ) -> AuditLog:
     """Record a bounded, redacted audit event as described in Appendix A.5."""
+    if isinstance(action, str):
+        normalized = action.strip().lower()
+        try:
+            action = AuditActionEnum(normalized)
+        except ValueError:
+            pass
+
     ip = None
     browser = None
     os_name = None

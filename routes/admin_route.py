@@ -41,7 +41,7 @@ from services.academic_service import ALLOWED_GRADE_NAMES
 from services.invitation_service import send_teacher_invitation, list_invitations, resend_invitation, cancel_invitation
 from services.section_admin_service import SectionAdminService
 from services.student_admin_service import StudentAdminService
-from services.audit_service import get_audit_logs
+from services.audit_service import get_audit_logs, get_event_severity
 from services.notification_service import get_notifications, mark_read, mark_all_read, delete_notification, delete_all_notifications
 from services.report_service import ReportService
 from utils.enum import RoleEnum, AccountStatusEnum, InvitationStatusEnum, AuditActionEnum, SectionStatusEnum
@@ -468,10 +468,11 @@ def list_system_audit_logs(
         d_to = datetime.fromisoformat(date_to)
 
     total, items = get_audit_logs(db, module=module, action=action, actor_role=actor_role, date_from=d_from, date_to=d_to, search=search, page=page, per_page=per_page)
-    serialized_items = [
-        AuditLogOut.model_validate(item).model_dump(mode="json")
-        for item in items
-    ]
+    serialized_items = []
+    for item in items:
+        item_data = AuditLogOut.model_validate(item).model_dump(mode="json")
+        item_data["severity"] = get_event_severity(item.action, item.status)
+        serialized_items.append(item_data)
     return PaginatedResponse(total=total, page=page, per_page=per_page, items=serialized_items)
 
 
