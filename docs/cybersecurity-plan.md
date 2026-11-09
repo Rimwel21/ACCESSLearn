@@ -262,9 +262,9 @@ The incident record should include a unique reference, detection time, reporter,
 
 ## 6. Testing and Evidence
 
-The local feature branch contains automated tests for authentication, authorization, input validation, token-purpose separation, audit-log redaction, security headers, cookie settings, material-upload validation, account blocking, invalid/expired tokens, progress-monitoring isolation, retakes, deadlines, and a complete 35-student progress roster.
+The local feature branch contains automated tests for authentication, authorization, input validation, token-purpose separation, audit-log redaction, security headers, cookie settings, material-upload validation, account blocking, invalid/expired tokens, progress-monitoring isolation, retakes, deadlines, complete 35-student progress roster, atomic database backup generation, SHA-256 cryptographic verification, path traversal prevention, tamper detection, and production restoration safeguards.
 
-Latest authorized local result: **20 tests passed, 0 failed**. Python compilation and `git diff --check` also passed. These results do not verify the production hosting environment, WAF, TLS termination, Supabase backup restoration, Cloudinary delivery controls, centralized alerting, full browser security, or penetration resistance.
+Latest authorized local result: **28 tests passed, 0 failed** (`python -m unittest discover -s tests -v`). Python compilation and `git diff --check` also passed. These results do not verify the production hosting environment, WAF, TLS termination, Supabase backup restoration, Cloudinary delivery controls, centralized alerting, full browser security, or penetration resistance.
 
 ## 7. Cybersecurity Checklist
 
@@ -277,7 +277,7 @@ Latest authorized local result: **20 tests passed, 0 failed**. Python compilatio
 | E. Configuration, Components and Network |  | ✓ |  | Environment secrets, restricted CORS, API CSP baseline, other headers and ignore rules exist; frontend-host CSP, deployment TLS/WAF and dependency scans are unverified |
 | F. Logging, Backup and Incident Response |  | ✓ |  | Audit events, redaction and local procedures exist; production backups, alerts and exercises are unverified |
 | G. Standards and Compliance |  | ✓ |  | Controls are mapped to OWASP, six ISO/IEC 27002 themes, Philippine privacy principles and NSE 1–3 concepts; PCI DSS is documented as not applicable; no formal certification or legal assessment exists |
-| H. Testing and Evidence | ✓* |  |  | 20 automated tests passed; deployed-environment and penetration testing remain outside the evidence scope |
+| H. Testing and Evidence | ✓* |  |  | 28 automated tests passed; deployed-environment and penetration testing remain outside the evidence scope |
 
 \*The Yes rating for H applies only to the defined local automated-test scope. It is not evidence of penetration testing or production-environment verification.
 

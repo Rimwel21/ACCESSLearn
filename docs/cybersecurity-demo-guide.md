@@ -67,7 +67,7 @@ Keep a third terminal ready in the repository root. Load the environment using t
 python -m unittest discover -s tests -v
 ```
 
-Expected local evidence at the time this guide was prepared: **20 tests passed, 0 failed**.
+Expected local evidence at the time this guide was prepared: **28 tests passed, 0 failed**.
 
 ## 3. Recommended 10–15 minute demonstration
 
