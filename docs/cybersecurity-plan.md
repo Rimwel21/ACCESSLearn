@@ -66,44 +66,49 @@ Backend authorization must verify authentication, account status, role, record o
 
 ## 2. Risk and Threat Assessment
 
-### 2.1 Assessment method
+### 2.1 Method and Priority Matrix
 
-The assessment uses the OWASP Top 10:2025 as an application-security risk framework. The categories identify credible threat classes and do not mean every vulnerability has been demonstrated in SIGNHEAR.
+OWASP Top 10:2025 is used to group relevant application-security threat scenarios, not to assert that the vulnerabilities have been proven in SIGNHEAR [2]. Likelihood estimates the conditions and opportunity required for misuse; impact estimates harm to learners, records, or service availability; priority follows the project risk matrix. "High priority" indicates that a threat scenario requires immediate, validated controls, not that it is automatically easy to exploit.
 
-| Rating | Likelihood | Impact |
-|---|---|---|
-| High | A normal or public workflow gives a direct opportunity for misuse when controls are absent | Restricted-data exposure, privileged takeover, widespread record alteration, or substantial interruption |
-| Medium | Misuse requires an additional condition such as compromised credentials, a malicious file, or a compromised dependency | Limited exposure, disruption, or alteration requiring recovery |
-| Low | Several uncommon conditions are required | Minor and limited disruption or exposure |
+#### Likelihood and Impact Rating Definitions
 
-Priority matrix:
+| Rating | Likelihood Definition | Impact Definition |
+| :--- | :--- | :--- |
+| **High** | Routine workflow creates a direct opportunity when safeguards are absent | Restricted data exposure, privileged takeover, widespread alteration, or major service outage |
+| **Medium** | An additional condition or compromise is required (e.g. compromised token, malicious upload) | Limited exposure, recoverable modification, or temporary disruption |
+| **Low** | Several uncommon conditions are required (e.g. multi-step failure under isolated conditions) | Minor constrained exposure or brief interruption |
 
-| Likelihood \ Impact | Low | Medium | High |
-|---|---:|---:|---:|
-| Low | Low | Low | Medium |
-| Medium | Low | Medium | High |
-| High | Medium | High | High |
+#### Priority Determination Matrix
 
-> A High priority does not mean SIGNHEAR is automatically easy to breach. It means the combination of likelihood and potential impact requires urgent treatment. Ratings may be reduced only after controls are implemented, tested, and reassessed.
+| Likelihood \ Impact | Low Impact | Medium Impact | High Impact |
+| :--- | :---: | :---: | :---: |
+| **Low Likelihood** | Low | Low | Medium |
+| **Medium Likelihood** | Low | Medium | **High** |
+| **High Likelihood** | Medium | **High** | **High** |
 
-### 2.2 Initial risk register
+---
 
-| ID | OWASP mapping | Scenario | Likelihood | Impact | Initial priority |
-|---|---|---|---|---|---|
-| R1 | A01 Broken Access Control | A learner requests another learner's record, or a teacher requests an unrelated class | Medium | Medium | Medium |
-| R2 | A07 Authentication Failures | Compromised teacher or administrator credentials enable unauthorized actions | Medium | High | High |
-| R3 | A02 Security Misconfiguration | Unsafe CORS, debugging, public media, or excessive database access exposes information | Medium | High | High |
-| R4 | A04 Cryptographic Failures | Exposed signing keys or unprotected backups compromise accounts or records | Medium | Medium | Medium |
-| R5 | A05 Injection | Malicious input reaches a database operation or unsafe content-rendering path | Medium | High | High |
-| R6 | A03 Software Supply Chain Failures | A compromised package, build action, or dependency reaches production | Medium | Medium | Medium |
-| R7 | A08 Software or Data Integrity Failures | Unauthorized model or dataset replacement changes recognition behavior | Medium | Medium | Medium |
-| R8 | A06 Insecure Design | Replayed or concurrent requests create duplicate attempts or repeated retake use | Medium | Medium | Medium |
-| R9 | A07 Authentication Failures / A02 Security Misconfiguration | A second learner sees private information from a prior shared-browser session | Medium | Medium | Medium |
-| R10 | A09 Security Logging and Alerting Failures | Abuse, mass access, or privilege changes are not detected | Medium | High | High |
-| R11 | A10 Mishandling of Exceptional Conditions | Exhaustion or failure interrupts recognition, uploads, or database operations | Medium | High | High |
-| R12 | A06 Insecure Design / A08 Integrity Failures / A10 Exceptional Conditions | A malicious uploaded file reaches a user or processing component | Medium | Medium | Medium |
+### 2.2 Initial Risk Register
 
-This register represents inherent, design-based risk. A future treatment register should record the control owner, due date, verification evidence, residual likelihood, residual impact, and formal risk acceptance.
+| ID | OWASP Top 10:2025 Mapping | Grade 4 SIGNHEAR Threat Scenario | Likelihood | Impact | Priority |
+| :---: | :--- | :--- | :---: | :---: | :---: |
+| **R1** | A01 Broken Access Control | Student accesses another learner’s record; teacher accesses an unrelated class | Medium | Medium | Medium |
+| **R2** | A07 Authentication Failures | Compromised staff/admin credentials enable unauthorized privileged actions | Medium | High | **High** |
+| **R3** | A02 Security Misconfiguration | Debug output, unsafe CORS, or publicly accessible private media | Medium | High | **High** |
+| **R4** | A04 Cryptographic Failures | Exposed signing key, weak password storage, or unprotected database snapshot | Medium | Medium | Medium |
+| **R5** | A05 Injection | Unsafe user input reaches queries or rendered lesson content | Medium | High | **High** |
+| **R6** | A03 Supply Chain Failures | Compromised dependency or build action reaches production release | Medium | Medium | Medium |
+| **R7** | A08 Software or Data Integrity Failures | Unauthorized recognition model or dataset modification | Medium | Medium | Medium |
+| **R8** | A06 Insecure Design | Replayed submissions change progress or consume retake quota twice | Medium | Medium | Medium |
+| **R9** | A07 Authentication Failures / A02 Misconfiguration | Prior user session or private cached data accessible on a shared computer lab browser | Medium | Medium | Medium |
+| **R10** | A09 Logging and Alerting Failures | Abuse, mass access, or privilege escalation remains unnoticed by administrators | Medium | High | **High** |
+| **R11** | A10 Exceptional Conditions | Service exhaustion or failed operations damage system availability | Medium | High | **High** |
+| **R12** | A06 Insecure Design | Insufficient restrictions permit dangerous uploaded file type or processing payload | Medium | Medium | Medium |
+
+#### Mapping Notes and Priority Distribution
+- **R9 Mapping Context**: Concerns lingering authentication/session state and browser-storage configuration in shared school environments; a separate record-level permission failure would also involve A01.
+- **R12 Upload Design Context**: Primarily addresses unsafe upload-control design, for which OWASP identifies unrestricted dangerous file types under A06; A05 is added only where a specifically identified injection path exists [2].
+- **Priority Summary**: The matrix identifies **five High-priority scenarios** (**R2, R3, R5, R10, and R11**) and **seven Medium-priority scenarios**. These represent inherent, design-based assessments rather than residual-risk ratings. Risk reduction requires verified implementation evidence, automated testing, and ongoing administrative review.
 
 ## 3. Security Architecture and Controls
 
@@ -142,8 +147,8 @@ A WAF and reverse proxy supplement application controls; they do not replace bac
 | C8 Encryption and secrets | Environment-based secrets and expanded ignore rules | Partly implemented | Rotation procedure, secret manager, backup encryption verification |
 | C9 Supply chain and model integrity | Pinned Python requirements and frontend lockfile | Partly implemented | Automated vulnerability/secret scans; model and dataset hashes; release records |
 | C10 PWA and synchronization | Service worker bypasses APIs; logout clears selected browser state; backend rechecks queued mutations | Partly implemented | Review IndexedDB/profile caching, offline login, shared-device data clearing and account isolation |
-| C11 Backup and recovery | Manual local SQLite backup/restore procedure | Partly implemented | Authorized encrypted production schedule, RPO/RTO, restoration exercise |
-| C12 Monitoring and alerts | Authentication/authorization audit events and local secret-redaction controls | Partly implemented | Central alerts, protected retention, WAF/server/backup monitoring |
+| C11 Backup and recovery | Automated atomic SQLite backup, PostgreSQL snapshot export, SHA-256 cryptographic verification, sandbox dry-run restoration, pre-restore safety snapshot rollback, and Admin GUI integration (verified by test_backup_restore.py) | Implemented (Feature Branch) | Production cron orchestration, off-site encrypted replica sync |
+| C12 Monitoring and alerts | 13-action audit logging engine with automated severity triage (CRITICAL, HIGH, MEDIUM, LOW), sensitive payload redaction, and Admin GUI security monitoring (verified by test_security_controls.py) | Implemented (Feature Branch) | External SIEM webhook forwarding, automated email/SMS alerts on critical security events |
 
 ### 3.3 Authentication, authorization and sessions
 
