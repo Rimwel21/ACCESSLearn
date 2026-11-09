@@ -93,3 +93,4 @@ def verify_and_unlock_demo_accounts():
 
 if __name__ == "__main__":
     verify_and_unlock_demo_accounts()
+
