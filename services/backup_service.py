@@ -12,7 +12,7 @@ import os
 import re
 import shutil
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
@@ -26,11 +26,13 @@ from models.accounts import Accounts
 from schemas.backup_schema import (
     BackupCreateRequest,
     BackupItemOut,
+    BackupScheduleConfig,
+    BackupScheduleUpdateRequest,
     BackupVerifyResponse,
     DatabaseStatusResponse,
 )
 from services.audit_service import write_log
-from utils.enum import AuditActionEnum
+from utils.enum import AuditActionEnum, RoleEnum
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +40,7 @@ logger = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).resolve().parent.parent
 BACKUP_DIR = BASE_DIR / "backups"
 MANIFEST_PATH = BACKUP_DIR / "manifest.json"
+SCHEDULE_CONFIG_PATH = BACKUP_DIR / "schedule_config.json"
 
 _BACKUP_ID_REGEX = re.compile(r"^[a-zA-Z0-9_\-]+$")
 
@@ -154,7 +157,15 @@ def detect_database_info(db: Optional[Session] = None) -> Dict[str, Any]:
 
 def get_system_status(db: Session) -> DatabaseStatusResponse:
     info = detect_database_info(db)
+    
+    # Auto-run scheduled backup if due
+    try:
+        check_and_run_scheduled_backup(db)
+    except Exception as exc:
+        logger.warning(f"Error checking scheduled backup: {exc}")
+
     manifest = _load_manifest()
+    schedule_cfg = load_or_init_schedule_config()
 
     last_backup = manifest[0]["created_at"] if manifest else None
     last_verified = None
@@ -171,12 +182,15 @@ def get_system_status(db: Session) -> DatabaseStatusResponse:
         backup_capable=info["backup_capable"],
         restore_capable=info["restore_capable"],
         backup_storage_path=str(BACKUP_DIR),
+        vault_relative_path="./backups/",
+        manifest_path="./backups/manifest.json",
         total_backups=len(manifest),
         last_backup_time=last_backup,
         last_verified_time=last_verified,
         environment=settings.environment,
         production_safeguards_active=info["production_safeguards"],
         status_message=info["message"],
+        schedule=schedule_cfg,
     )
 
 
@@ -390,6 +404,195 @@ def list_backups() -> List[BackupItemOut]:
         except Exception:
             pass
     return results
+
+
+def _parse_iso(iso_str: Optional[str]) -> Optional[datetime]:
+    if not iso_str:
+        return None
+    try:
+        dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except Exception:
+        return None
+
+
+def _get_cadence_delta(cadence: str) -> timedelta:
+    cad = (cadence or "").lower()
+    if cad == "daily":
+        return timedelta(days=1)
+    if cad == "weekly":
+        return timedelta(days=7)
+    if cad == "every_1_month":
+        return timedelta(days=30)
+    # Default to every 2 weeks
+    return timedelta(days=14)
+
+
+def _get_cadence_human(cadence: str) -> str:
+    cad = (cadence or "").lower()
+    mapping = {
+        "every_2_weeks": "Every 2 Weeks",
+        "every_1_month": "Every 1 Month",
+        "weekly": "Weekly",
+        "daily": "Daily",
+        "disabled": "Manual Only (Disabled)",
+    }
+    return mapping.get(cad, "Every 2 Weeks")
+
+
+def load_or_init_schedule_config() -> BackupScheduleConfig:
+    _ensure_backup_dir()
+    manifest = _load_manifest()
+    last_backup_time = manifest[0]["created_at"] if manifest else None
+
+    config_dict: Dict[str, Any] = {}
+    if SCHEDULE_CONFIG_PATH.exists():
+        try:
+            config_dict = json.loads(SCHEDULE_CONFIG_PATH.read_text(encoding="utf-8"))
+        except Exception as exc:
+            logger.warning(f"Could not read schedule_config.json: {exc}")
+
+    enabled = config_dict.get("enabled", True)
+    cadence = config_dict.get("cadence", "every_2_weeks")
+    retention_count = config_dict.get("retention_count", 10)
+    auto_verify = config_dict.get("auto_verify", True)
+    last_run_time = config_dict.get("last_run_time") or last_backup_time
+
+    delta = _get_cadence_delta(cadence)
+    if last_run_time:
+        last_dt = _parse_iso(last_run_time)
+        if last_dt:
+            next_run_time = (last_dt + delta).isoformat()
+        else:
+            next_run_time = (datetime.now(timezone.utc) + delta).isoformat()
+    else:
+        next_run_time = (datetime.now(timezone.utc) + delta).isoformat()
+
+    return BackupScheduleConfig(
+        enabled=enabled,
+        cadence=cadence,
+        cadence_human=_get_cadence_human(cadence),
+        last_run_time=last_run_time,
+        next_run_time=next_run_time if (enabled and cadence != "disabled") else None,
+        vault_path="./backups/",
+        absolute_vault_path=str(BACKUP_DIR.resolve()),
+        manifest_path="./backups/manifest.json",
+        retention_count=retention_count,
+        auto_verify=auto_verify,
+        message=f"Automated backups active ({_get_cadence_human(cadence)}) stored in vault ./backups/"
+        if (enabled and cadence != "disabled")
+        else "Automated backups are paused (manual only).",
+    )
+
+
+def save_schedule_config(cfg: BackupScheduleConfig) -> None:
+    _ensure_backup_dir()
+    data = cfg.model_dump(mode="json")
+    SCHEDULE_CONFIG_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def update_schedule_config(
+    payload: BackupScheduleUpdateRequest,
+    actor: Accounts,
+    db: Session,
+    request: Optional[Request] = None,
+) -> BackupScheduleConfig:
+    cfg = load_or_init_schedule_config()
+    old_val = {"enabled": cfg.enabled, "cadence": cfg.cadence}
+
+    if payload.enabled is not None:
+        cfg.enabled = payload.enabled
+    if payload.cadence is not None:
+        cfg.cadence = payload.cadence
+        cfg.cadence_human = _get_cadence_human(payload.cadence)
+    if payload.retention_count is not None:
+        cfg.retention_count = payload.retention_count
+    if payload.auto_verify is not None:
+        cfg.auto_verify = payload.auto_verify
+
+    if cfg.enabled and cfg.cadence != "disabled":
+        delta = _get_cadence_delta(cfg.cadence)
+        if cfg.last_run_time:
+            last_dt = _parse_iso(cfg.last_run_time)
+            if last_dt:
+                cfg.next_run_time = (last_dt + delta).isoformat()
+            else:
+                cfg.next_run_time = (datetime.now(timezone.utc) + delta).isoformat()
+        else:
+            cfg.next_run_time = (datetime.now(timezone.utc) + delta).isoformat()
+        cfg.message = f"Automated backups active ({cfg.cadence_human}) stored in vault ./backups/"
+    else:
+        cfg.next_run_time = None
+        cfg.message = "Automated backups are paused (manual only)."
+
+    save_schedule_config(cfg)
+
+    new_val = {"enabled": cfg.enabled, "cadence": cfg.cadence, "next_run_time": cfg.next_run_time}
+    write_log(
+        db,
+        module="Backup",
+        action=AuditActionEnum.backup_schedule_updated,
+        actor_id=actor.id,
+        actor_role=actor.role,
+        affected_record=f"Cadence: {cfg.cadence_human}",
+        old_value=old_val,
+        new_value=new_val,
+        reason=f"Administrator updated automated backup schedule to {cfg.cadence_human}",
+        request=request,
+        status="success",
+    )
+    return cfg
+
+
+def check_and_run_scheduled_backup(
+    db: Session,
+    actor: Optional[Accounts] = None,
+    request: Optional[Request] = None,
+    force: bool = False,
+) -> Optional[BackupItemOut]:
+    cfg = load_or_init_schedule_config()
+    if not cfg.enabled or cfg.cadence == "disabled":
+        return None
+
+    now_utc = datetime.now(timezone.utc)
+    is_due = False
+
+    if force:
+        is_due = True
+    elif cfg.next_run_time:
+        next_dt = _parse_iso(cfg.next_run_time)
+        if next_dt and now_utc >= next_dt:
+            is_due = True
+
+    if not is_due:
+        return None
+
+    if actor is None:
+        actor = db.query(Accounts).filter(Accounts.role == RoleEnum.admin).first()
+        if not actor:
+            actor = Accounts(id=1, username="system_scheduler", email="system@signhear.local", role=RoleEnum.admin)
+
+    try:
+        backup_item = create_database_backup(
+            db=db,
+            actor=actor,
+            request=request,
+            payload=BackupCreateRequest(
+                backup_type="scheduled",
+                notes=f"Automated scheduled backup ({cfg.cadence_human})",
+            ),
+        )
+
+        cfg.last_run_time = backup_item.created_at
+        delta = _get_cadence_delta(cfg.cadence)
+        cfg.next_run_time = (now_utc + delta).isoformat()
+        save_schedule_config(cfg)
+        return backup_item
+    except Exception as exc:
+        logger.error(f"Automated scheduled backup execution failed: {exc}", exc_info=True)
+        return None
 
 
 def verify_backup_integrity(

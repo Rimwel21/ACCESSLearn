@@ -346,6 +346,47 @@ class BackupRestoreSecurityTests(unittest.TestCase):
             self.assertEqual(res.status_code, 403)
             self.assertIn("restricted", res.json()["detail"].lower())
 
+    def test_backup_schedule_cadence_and_persistence(self):
+        # 1. Admin queries schedule defaults
+        res = self.client.get(
+            "/admin/backup/schedule",
+            headers={"Authorization": f"Bearer {self.admin_token}"}
+        )
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertTrue(data["enabled"])
+        self.assertEqual(data["vault_path"], "./backups/")
+        self.assertIn("backups", data["manifest_path"])
+
+        # 2. Update cadence to Every 1 Month
+        update_res = self.client.post(
+            "/admin/backup/schedule",
+            headers={"Authorization": f"Bearer {self.admin_token}"},
+            json={"cadence": "every_1_month", "enabled": True}
+        )
+        self.assertEqual(update_res.status_code, 200)
+        updated_data = update_res.json()
+        self.assertEqual(updated_data["cadence"], "every_1_month")
+        self.assertEqual(updated_data["cadence_human"], "Every 1 Month")
+
+    def test_system_severity_is_high_for_backup_and_access_denied(self):
+        from services.audit_service import get_event_severity
+        from utils.enum import AuditActionEnum
+
+        # Backup lifecycle actions are HIGH in the system
+        self.assertEqual(get_event_severity(AuditActionEnum.backup_requested), "high")
+        self.assertEqual(get_event_severity(AuditActionEnum.backup_started), "high")
+        self.assertEqual(get_event_severity(AuditActionEnum.backup_completed), "high")
+        self.assertEqual(get_event_severity(AuditActionEnum.backup_verification_passed), "high")
+
+        # Security threats / Access Denied are HIGH in the system
+        self.assertEqual(get_event_severity(AuditActionEnum.access_denied), "high")
+        self.assertEqual(get_event_severity(AuditActionEnum.login_failed), "high")
+
+        # Failures are CRITICAL
+        self.assertEqual(get_event_severity(AuditActionEnum.backup_failed, status="failed"), "critical")
+        self.assertEqual(get_event_severity(AuditActionEnum.access_denied, status="failed"), "critical")
+
 
 if __name__ == "__main__":
     unittest.main()

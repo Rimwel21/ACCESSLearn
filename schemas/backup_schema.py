@@ -5,6 +5,27 @@ from typing import Optional, Dict, List
 from pydantic import BaseModel, Field
 
 
+class BackupScheduleConfig(BaseModel):
+    enabled: bool = True
+    cadence: str = "every_2_weeks"  # "every_2_weeks", "every_1_month", "weekly", "daily", "disabled"
+    cadence_human: str = "Every 2 Weeks"
+    last_run_time: Optional[str] = None
+    next_run_time: Optional[str] = None
+    vault_path: str = "./backups/"
+    absolute_vault_path: str = ""
+    manifest_path: str = "./backups/manifest.json"
+    retention_count: int = 10
+    auto_verify: bool = True
+    message: str = "Automated backups active."
+
+
+class BackupScheduleUpdateRequest(BaseModel):
+    enabled: Optional[bool] = None
+    cadence: Optional[str] = Field(None, pattern=r"^(every_2_weeks|every_1_month|weekly|daily|disabled)$")
+    retention_count: Optional[int] = Field(None, ge=1, le=100)
+    auto_verify: Optional[bool] = None
+
+
 class DatabaseStatusResponse(BaseModel):
     active_database: str
     engine_type: str
@@ -13,12 +34,15 @@ class DatabaseStatusResponse(BaseModel):
     backup_capable: bool
     restore_capable: bool
     backup_storage_path: str
+    vault_relative_path: str = "./backups/"
+    manifest_path: str = "./backups/manifest.json"
     total_backups: int
     last_backup_time: Optional[str] = None
     last_verified_time: Optional[str] = None
     environment: str
     production_safeguards_active: bool
     status_message: str
+    schedule: Optional[BackupScheduleConfig] = None
 
 
 class BackupItemOut(BaseModel):

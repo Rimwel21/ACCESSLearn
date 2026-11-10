@@ -98,20 +98,33 @@ def get_event_severity(action: AuditActionEnum | str, status: str = "success") -
     act = action.value if isinstance(action, AuditActionEnum) else str(action).lower()
     stat = str(status).lower()
     
+    # Critical: Direct destructive actions, failed integrity validation, or active restore execution
     if act in {"restore_failed", "restore_started", "restore_approved", "hard_deleted"}:
         return "critical"
-    if stat == "failed" and act in {"access_denied", "restore_validation_failed"}:
+    if stat == "failed" and act in {"access_denied", "restore_validation_failed", "backup_failed", "backup_verification_failed"}:
         return "critical"
         
-    if act in {"access_denied", "login_failed", "backup_failed", "restore_validation_failed"}:
+    # High in the system: Backup & restore operations, access denials, authentication failures, and security controls
+    # (Note: On paper in the Initial Risk Register, R1/R4/R8/R12 are prioritized as Medium per grade 4 scope rubric,
+    # but in the live system implementation they are elevated to High severity for administrator visibility and alert triage)
+    if (
+        act in {
+            "access_denied", "login_failed", "backup_failed", "restore_validation_failed",
+            "backup_requested", "backup_started", "backup_completed", "backup_verification_started",
+            "backup_verification_passed", "backup_verification_failed", "backup_schedule_updated",
+            "restore_requested", "password_reset_requested", "password_reset_completed",
+            "bulk_action", "deactivated"
+        }
+        or "backup" in act
+        or "restore" in act
+    ):
         return "high"
     if stat == "failed":
         return "high"
         
     if act in {
-        "backup_requested", "restore_requested", "password_reset_requested",
-        "password_reset_completed", "created", "updated", "assigned", "archived",
-        "restored", "transferred", "bulk_action", "deactivated", "activated"
+        "created", "updated", "assigned", "archived",
+        "restored", "transferred", "activated"
     }:
         return "medium"
         

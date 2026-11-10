@@ -14,6 +14,8 @@ from models.accounts import Accounts
 from schemas.backup_schema import (
     BackupCreateRequest,
     BackupItemOut,
+    BackupScheduleConfig,
+    BackupScheduleUpdateRequest,
     BackupVerifyResponse,
     DatabaseStatusResponse,
     DryRunRestoreResponse,
@@ -22,10 +24,13 @@ from schemas.backup_schema import (
     RestoreResponse,
 )
 from services.backup_service import (
+    check_and_run_scheduled_backup,
     create_database_backup,
     get_download_file,
     get_system_status,
     list_backups,
+    load_or_init_schedule_config,
+    update_schedule_config,
     verify_backup_integrity,
 )
 from services.restore_service import (
@@ -46,6 +51,35 @@ def get_backup_status(
 ):
     """Retrieve active database status, engine type, and backup readiness."""
     return get_system_status(db)
+
+
+@router.get("/schedule", response_model=BackupScheduleConfig)
+def get_backup_schedule(
+    admin: Accounts = Depends(require_admin),
+):
+    """Retrieve automated backup cadence (e.g. Every 2 Weeks / Every 1 Month) and vault path."""
+    return load_or_init_schedule_config()
+
+
+@router.post("/schedule", response_model=BackupScheduleConfig)
+def update_backup_schedule(
+    payload: BackupScheduleUpdateRequest,
+    request: Request = None,
+    db: Session = Depends(get_db),
+    admin: Accounts = Depends(require_admin),
+):
+    """Configure automated backup schedule (cadence, auto-verify, and retention)."""
+    return update_schedule_config(payload, actor=admin, db=db, request=request)
+
+
+@router.post("/schedule/run-now", response_model=Optional[BackupItemOut])
+def trigger_scheduled_backup_now(
+    request: Request = None,
+    db: Session = Depends(get_db),
+    admin: Accounts = Depends(require_admin),
+):
+    """Force run the scheduled automated backup task immediately."""
+    return check_and_run_scheduled_backup(db=db, actor=admin, request=request, force=True)
 
 
 @router.get("/list", response_model=List[BackupItemOut])

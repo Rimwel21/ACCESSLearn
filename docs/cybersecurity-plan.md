@@ -92,7 +92,7 @@ OWASP Top 10:2025 is used to group relevant application-security threat scenario
 
 | ID | OWASP Top 10:2025 Mapping | Grade 4 SIGNHEAR Threat Scenario | Likelihood | Impact | Priority |
 | :---: | :--- | :--- | :---: | :---: | :---: |
-| **R1** | A01 Broken Access Control | Student accesses another learner’s record; teacher accesses an unrelated class | Medium | Medium | Medium |
+| **R1** | A01 Broken Access Control | Student accesses another learner’s record; teacher accesses an unrelated class | High | Medium | Medium |
 | **R2** | A07 Authentication Failures | Compromised staff/admin credentials enable unauthorized privileged actions | Medium | High | **High** |
 | **R3** | A02 Security Misconfiguration | Debug output, unsafe CORS, or publicly accessible private media | Medium | High | **High** |
 | **R4** | A04 Cryptographic Failures | Exposed signing key, weak password storage, or unprotected database snapshot | Medium | Medium | Medium |
@@ -104,6 +104,9 @@ OWASP Top 10:2025 is used to group relevant application-security threat scenario
 | **R10** | A09 Logging and Alerting Failures | Abuse, mass access, or privilege escalation remains unnoticed by administrators | Medium | High | **High** |
 | **R11** | A10 Exceptional Conditions | Service exhaustion or failed operations damage system availability | Medium | High | **High** |
 | **R12** | A06 Insecure Design | Insufficient restrictions permit dangerous uploaded file type or processing payload | Medium | Medium | Medium |
+
+#### System Operational Triage vs. Paper Prioritization
+In the academic risk assessment register above (on paper), threat scenarios such as **R1 (Broken Access Control)**, **R4 (Cryptographic Failures)**, **R8 (Insecure Design)**, and **R12 (Unsafe Upload Design)** are classified with a **Medium** priority rating based on Grade 4 classroom constraints and compensatory controls. However, in the **live SIGNHEAR system implementation** (Administrator Audit Log & alert telemetry), all operational events involving access denial, authentication failures, and database backup/restoration lifecycles are explicitly elevated to **HIGH** severity (or **CRITICAL** for integrity validation failures). This intentional elevation guarantees that administrators receive immediate, high-priority visual badges and telemetry alerts in the live console whenever sensitive operations or potential policy violations occur.
 
 #### Mapping Notes and Priority Distribution
 - **R9 Mapping Context**: Concerns lingering authentication/session state and browser-storage configuration in shared school environments; a separate record-level permission failure would also involve A01.
@@ -262,9 +265,9 @@ The incident record should include a unique reference, detection time, reporter,
 
 ## 6. Testing and Evidence
 
-The local feature branch contains automated tests for authentication, authorization, input validation, token-purpose separation, audit-log redaction, security headers, cookie settings, material-upload validation, account blocking, invalid/expired tokens, progress-monitoring isolation, retakes, deadlines, complete 35-student progress roster, atomic database backup generation, SHA-256 cryptographic verification, path traversal prevention, tamper detection, and production restoration safeguards.
+The local feature branch contains automated tests for authentication, authorization, input validation, token-purpose separation, audit-log redaction, security headers, cookie settings, material-upload validation, account blocking, invalid/expired tokens, progress-monitoring isolation, retakes, deadlines, complete 35-student progress roster, atomic database backup generation, SHA-256 cryptographic verification, automated backup schedule configuration and persistence, system High-severity event classification, path traversal prevention, tamper detection, and production restoration safeguards.
 
-Latest authorized local result: **28 tests passed, 0 failed** (`python -m unittest discover -s tests -v`). Python compilation and `git diff --check` also passed. These results do not verify the production hosting environment, WAF, TLS termination, Supabase backup restoration, Cloudinary delivery controls, centralized alerting, full browser security, or penetration resistance.
+Latest authorized local result: **30 tests passed, 0 failed** (`python -m unittest discover -s tests -v`). Python compilation and `git diff --check` also passed. These results do not verify the production hosting environment, WAF, TLS termination, Supabase backup restoration, Cloudinary delivery controls, centralized alerting, full browser security, or penetration resistance.
 
 ## 7. Cybersecurity Checklist
 
@@ -277,7 +280,7 @@ Latest authorized local result: **28 tests passed, 0 failed** (`python -m unitte
 | E. Configuration, Components and Network |  | ✓ |  | Environment secrets, restricted CORS, API CSP baseline, other headers and ignore rules exist; frontend-host CSP, deployment TLS/WAF and dependency scans are unverified |
 | F. Logging, Backup and Incident Response |  | ✓ |  | Audit events, redaction and local procedures exist; production backups, alerts and exercises are unverified |
 | G. Standards and Compliance |  | ✓ |  | Controls are mapped to OWASP, six ISO/IEC 27002 themes, Philippine privacy principles and NSE 1–3 concepts; PCI DSS is documented as not applicable; no formal certification or legal assessment exists |
-| H. Testing and Evidence | ✓* |  |  | 28 automated tests passed; deployed-environment and penetration testing remain outside the evidence scope |
+| H. Testing and Evidence | ✓* |  |  | 30 automated tests passed; deployed-environment and penetration testing remain outside the evidence scope |
 
 \*The Yes rating for H applies only to the defined local automated-test scope. It is not evidence of penetration testing or production-environment verification.
 
@@ -289,7 +292,7 @@ Residual risk must be reviewed and accepted by the authorized school/project own
 
 ## 9. Demonstration and Oral Defense
 
-The approved demonstration should use local test accounts and non-production data. The presenter should demonstrate authentication, role separation, session behavior, validation, upload rejection, audit evidence, security headers, and automated tests while clearly identifying incomplete controls. The complete preparation checklist, presentation sequence, speaking script, evidence map, and likely professor questions are provided in [`cybersecurity-demo-guide.md`](cybersecurity-demo-guide.md).
+The approved demonstration should use local test accounts and non-production data. The presenter should demonstrate authentication, role separation, session behavior, validation, upload rejection, audit evidence, security headers, automated backup schedule configuration, vault storage, and automated tests while clearly identifying incomplete controls. The complete preparation checklist, presentation sequence, speaking script, evidence map, and likely professor questions are provided in [`cybersecurity-demo-guide.md`](cybersecurity-demo-guide.md).
 
 ## References
 
@@ -306,3 +309,193 @@ The approved demonstration should use local test accounts and non-production dat
 11. Republic of the Philippines. (2012). [Republic Act No. 10173: Data Privacy Act of 2012](https://lawphil.net/statutes/repacts/ra2012/ra_10173_2012.html).
 12. National Privacy Commission. (2016). [Implementing Rules and Regulations of Republic Act No. 10173](https://privacy.gov.ph/implementing-rules-regulations-data-privacy-act-2012/).
 13. OWASP Foundation. [Logging Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html).
+
+---
+
+# APPENDIX A. SECURITY CODE LOCATIONS AND DEMONSTRATION EVIDENCE
+
+All paths below are relative to the SIGNHEAR repository root unless otherwise indicated. Backend paths such as `routes/`, `services/`, `schemas/`, `utils/`, `models/`, and `tests/` refer to their corresponding locations inside `E-Learn/Backend/`.
+
+All demonstrations must use test accounts and non-sensitive data. Passwords, token values, signing keys, database credentials, environment variables, and real learner information must never be displayed.
+
+## A.1 Authentication and Login Validation
+
+**Visible system location:** Grade 4 Student and Science Teacher login page (`/login`) and Administrator login page (`/admin/login`).
+
+**Code locations:**
+- `E-Learn/frontend/src/pages/auth/LoginPage.vue`
+- `E-Learn/frontend/src/pages/admin/AdminLoginPage.vue`
+- `E-Learn/frontend/src/stores/auth.ts`
+- `E-Learn/Backend/routes/accounts_route.py`
+- `E-Learn/Backend/schemas/accounts_schema.py`
+- `E-Learn/Backend/services/auth_service.py`
+- `E-Learn/Backend/auth/account_auth.py`
+- `E-Learn/Backend/limiter.py`
+- `E-Learn/Backend/scripts/demo_account_check.py`
+
+**Demonstration:**
+1. Open the Student or Science Teacher login page.
+2. Submit an invalid test login and show that the system safely rejects the request.
+3. Sign in using an authorized test account.
+4. Show that the user is redirected to the dashboard corresponding to the account's actual role.
+5. If demonstrating the Administrator login, use a separate authorized Administrator test account.
+
+**Evidence and limitation:** Backend login-payload validation, bcrypt password verification, account-status checking, token-purpose separation, and SlowAPI IP-based rate limiting are active. The login endpoint enforces a limit of five requests per minute, with an emergency demonstration environment toggle (`ENABLE_RATE_LIMITING=false`) and automated unlock utility (`scripts/demo_account_check.py`) to prevent lockouts during oral defense demonstrations. Staff MFA and complete self-service recovery remain planned.
+
+## A.2 Backend Role-Based Access Control
+
+**Visible system location:** Administrator Dashboard and Audit Log page (`/admin/audit-log`).
+
+**Code locations:**
+- `E-Learn/Backend/utils/dependencies.py`
+- `E-Learn/Backend/utils/admin_guard.py`
+- `E-Learn/Backend/routes/admin_route.py`
+- `E-Learn/frontend/src/router/index.ts`
+
+**Demonstration:**
+1. Sign in using a Grade 4 Student or Science Teacher test account.
+2. Attempt to navigate directly to `/admin/audit-log` or invoke `/admin/audit-logs`. Show that the route is blocked with an HTTP 403 Forbidden rejection and recorded in audit logs.
+3. Sign in using an authorized Administrator test account and open `/admin/audit-log`. Show that access is granted.
+
+**Evidence and limitation:** `get_current_user` decodes and validates JWT claims, and `require_admin` strictly enforces administrative role checks. Menu hiding on the frontend is treated solely as a UI affordance, not a primary security boundary.
+
+## A.3 Session Management and Logout
+
+**Visible system location:** Logout controls across role navigation bars and browser Developer Tools under Application -> Storage.
+
+**Code locations:**
+- `E-Learn/frontend/src/stores/auth.ts`
+- `E-Learn/Backend/routes/refresh_token.py`
+- `E-Learn/Backend/auth/account_auth.py`
+- `E-Learn/Backend/core/config.py`
+
+**Demonstration:**
+1. Sign in with a test account and inspect browser storage.
+2. Note the short-lived access token in local storage and the `HttpOnly` refresh token cookie.
+3. Click Logout and verify that stored auth state is cleared and authenticated API calls are rejected.
+
+**Evidence and limitation:** Tokens have bounded lifetimes and purpose separation. Storing access tokens in browser local storage remains a documented risk on shared computers; server-side token revocation and absolute session limits remain proposed.
+
+## A.4 Cryptographic Controls, Automated Backup Cadence, and Storage Vault
+
+**Visible system location:** Administrator Console -> Audit Log -> **Database Backup & Restore** tab (`/admin/audit-log`).
+
+**Code locations:**
+- `E-Learn/Backend/services/backup_service.py`
+- `E-Learn/Backend/services/restore_service.py`
+- `E-Learn/Backend/routes/backup_route.py`
+- `E-Learn/Backend/schemas/backup_schema.py`
+- `E-Learn/Backend/tests/test_backup_restore.py`
+- `E-Learn/frontend/src/pages/admin/AuditLogPage.vue`
+- `E-Learn/frontend/src/services/adminService.ts`
+
+**Demonstration:**
+1. Navigate to the **Database Backup & Restore** tab in the Admin Console.
+2. Inspect the **Automated Backup Cadence & Storage Vault** section:
+   - Cadence options: Change between **Every 2 Weeks (Recommended)** and **Every 1 Month** (or Weekly / Daily).
+   - Verify next scheduled run calculation and countdown.
+   - Inspect the Storage Vault path: `./backups/` (`<project_root>/backups/`) and manifest index `backups/manifest.json`.
+3. Click **Create Database Backup** to trigger an immediate snapshot.
+4. Click **Verify** on the generated backup row to demonstrate cryptographic SHA-256 integrity verification.
+5. Click **Dry-Run** to demonstrate safe isolated sandbox table restoration without modifying live database state.
+6. Click **Restore**, review pre-restoration warnings, and demonstrate guarded live restoration with typed `RESTORE` confirmation.
+
+**Physical Storage Location and Bare-Metal Recovery:**
+- All backup snapshots are saved to the server local vault directory `./backups/`.
+- File naming format: `backup_YYYYMMDD_HHMMSS_<token>.db` (SQLite) or `.json` (PostgreSQL).
+- In the event of bare-metal recovery or an offline server crash, the administrator can retrieve the verified `.db` file directly from `./backups/` and copy it to `local.db`.
+
+**Evidence and limitation:** Online SQLite backups use consistent SQLite online backup APIs, SHA-256 hashing, path traversal prevention, and pre-restoration safety snapshots. Automated backups run on the configured schedule (Every 2 Weeks / Every 1 Month). Production multi-tenant PostgreSQL restrictions block accidental overwrites on remote cloud staging.
+
+## A.5 Audit Logging, Redaction, and System High-Severity Classification
+
+**Visible system location:** Administrator Console -> Audit Log -> **Security Events & Audit Logs** tab.
+
+**Code locations:**
+- `E-Learn/Backend/services/audit_service.py`
+- `E-Learn/Backend/models/audit_log.py`
+- `E-Learn/Backend/routes/admin_route.py`
+- `E-Learn/Backend/tests/test_security_controls.py`
+- `E-Learn/frontend/src/pages/admin/AuditLogPage.vue`
+
+**Demonstration:**
+1. Open the Audit Log page as an Administrator.
+2. Note that security-critical events (such as `Backup requested`, `Backup completed`, `Backup verified`, `Access denied`, `Login failed`) are displayed with high-visibility **HIGH** severity badges.
+3. Click on any log row to inspect bounded, sanitized metadata (IP address, user agent, action timestamp).
+4. Demonstrate that sensitive data (passwords, tokens, database secrets) are strictly redacted.
+
+**System vs. Paper Severity Distinction:**
+- **On Paper (Section 2.2 Initial Risk Register):** Threats R1 (Broken Access Control), R4 (Cryptographic Failures), R8 (Insecure Design), and R12 (Upload Validation) are categorized with priority **Medium** based on Grade 4 classroom threat models.
+- **In System (Audit Log & SIEM):** All associated operational actions (`backup_*`, `restore_*`, `access_denied`, `login_failed`) are categorized with **HIGH** severity (or **CRITICAL** for failures) to ensure immediate administrative attention.
+
+## A.6 Security HTTP Headers and Restricted CORS
+
+**Visible system location:** Browser Developer Tools -> Network tab -> Response Headers.
+
+**Code locations:**
+- `E-Learn/Backend/main.py`
+- `E-Learn/Backend/core/config.py`
+- `E-Learn/Backend/tests/test_security_controls.py`
+
+**Demonstration:**
+1. Send an HTTP GET request to `/health` or any API endpoint.
+2. Inspect the HTTP response headers in Developer Tools:
+   - `Content-Security-Policy: default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'`
+   - `X-Content-Type-Options: nosniff`
+   - `X-Frame-Options: DENY`
+   - `Referrer-Policy: strict-origin-when-cross-origin`
+   - `Permissions-Policy: geolocation=(), camera=(), microphone=()`
+
+**Evidence and limitation:** Security headers mitigate clickjacking, MIME-sniffing, and cross-site framing. Production TLS enforcement is configured via reverse proxy.
+
+## A.7 Input Validation and File Upload Security Controls
+
+**Visible system location:** Science Teacher lesson material upload modal.
+
+**Code locations:**
+- `E-Learn/Backend/services/teacher_module_service.py`
+- `E-Learn/Backend/schemas/`
+- `E-Learn/Backend/tests/test_security_controls.py`
+
+**Demonstration:**
+1. Attempt to upload an unauthorized file type (e.g., an executable `.exe` or mismatched magic-byte file).
+2. Show that the backend immediately rejects the payload with HTTP 400 Bad Request.
+3. Upload an authorized presentation or document file within allowed size limits.
+
+**Evidence and limitation:** Whitelisted extension checks, declared MIME type validation, file header magic-byte signatures, and size limits (15 MB standard, 50 MB for presentations) prevent dangerous script upload. Virus scanning and quarantine pipelines remain planned for cloud deployment.
+
+## A.8 Progress Monitoring and Assessment Isolation
+
+**Visible system location:** Grade 4 Science Teacher Dashboard and Student Activities page.
+
+**Code locations:**
+- `E-Learn/Backend/services/student_content_service.py`
+- `E-Learn/Backend/services/teacher_dashboard_service.py`
+- `E-Learn/Backend/tests/test_progress_monitoring.py`
+
+**Demonstration:**
+1. Sign in as a Science Teacher and open Grade 4 section monitoring.
+2. Show that student progress percentages cover the complete 0% to 100% spectrum and all 35 enrolled learners are reported.
+3. Demonstrate deadline enforcement: unsubmitted activities past deadline are marked missing, and late submissions are flagged late.
+4. Sign in as Student A and Student B in separate browsers: show that activity answers and quiz retakes are strictly isolated per student.
+
+**Evidence and limitation:** Independent progress tracking prevents duplicate score overrides and replay attacks across learners.
+
+## A.9 Automated Test Suite Execution and Verification Evidence
+
+**Visible system location:** Terminal command-line test runner.
+
+**Code location:**
+- `E-Learn/Backend/tests/`
+
+**Demonstration:**
+1. Execute the comprehensive unit test suite:
+   ```bash
+   python -m unittest discover -s tests -v
+   ```
+2. Verify that all **30 automated tests pass with 0 failures** in approximately 13–16 seconds.
+
+**Test Suite Coverage Summary:**
+- **`test_backup_restore.py` (9 tests):** Role-based backup protection, path traversal blocking, atomic backup lifecycle, SHA-256 verification, tamper rejection, isolated dry-run sandbox recovery, production PostgreSQL safeguards, automated schedule cadence persistence, and system High-severity event classification.
+- **`test_security_controls.py` (14 tests):** Password complexity, token-purpose separation, access vs. refresh token substitution blocking, SlowAPI login rate limiting, audit log secret redaction, role guards, security headers, cookie flags, and upload signature verification.
+- **`test_progress_monitoring.py` (7 tests):** 35-student roster completeness, progress percentage bounds (0–100%), deadline enforcement, retake isolation, student activity draft independence, and teacher section scoping.

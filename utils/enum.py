@@ -67,6 +67,7 @@ class AuditActionEnum(str, Enum):
     backup_verification_started = "backup_verification_started"
     backup_verification_passed = "backup_verification_passed"
     backup_verification_failed = "backup_verification_failed"
+    backup_schedule_updated = "backup_schedule_updated"
     restore_requested = "restore_requested"
     restore_validation_failed = "restore_validation_failed"
     restore_approved = "restore_approved"
