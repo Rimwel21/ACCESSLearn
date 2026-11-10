@@ -357,6 +357,35 @@ class SecurityControlTests(unittest.TestCase):
         finally:
             settings.max_material_upload_mb = original_limit
 
+    def test_sql_injection_payloads_are_safely_neutralized(self):
+        """Verify that SQL injection payloads in login and queries are parameterized and safely neutralized."""
+        admin = self.account(RoleEnum.admin, username="realadmin")
+        malicious_inputs = [
+            "' OR '1'='1",
+            "admin' --",
+            "admin' /*",
+            "' UNION SELECT 1, 'admin', 'hacked', 'admin' --",
+            "'; DROP TABLE accounts; --",
+        ]
+        for payload in malicious_inputs:
+            with self.subTest(payload=payload):
+                try:
+                    user_login(
+                        request_for("/auth/account/login"),
+                        AccountLogin(username=payload, password="Password123!", role=RoleEnum.admin),
+                        Response(),
+                        self.db,
+                    )
+                except HTTPException as e:
+                    self.assertEqual(e.status_code, 401)
+                except ValidationError:
+                    pass
+
+        # Verify database tables remain intact (DROP TABLE attack failed)
+        admin_account = self.db.query(Accounts).filter(Accounts.id == admin.id).first()
+        self.assertIsNotNone(admin_account)
+        self.assertEqual(admin_account.username, "realadmin")
+
     def test_material_upload_rejects_bad_extension_mime_signature_and_size(self):
         cases = [
             upload("lesson.exe", "application/octet-stream", b"MZ"),
