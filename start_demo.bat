@@ -34,3 +34,4 @@ echo Keep the backend and frontend terminal windows open.
 echo To stop, simply close the two opened terminal windows.
 echo ===================================================
 pause
+
