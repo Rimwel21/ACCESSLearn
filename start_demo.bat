@@ -5,7 +5,7 @@ echo   SIGNHEAR: Grade 4 E-Learning System
 echo   Launching Backend and Frontend for Demo...
 echo ===================================================
 
-:: Step 0: Ensure backend .env exists
+:: Step 0a: Ensure backend .env exists
 if not exist ".env" (
     echo [Setup] Backend .env file missing. Creating from .env.example...
     copy .env.example .env >nul
@@ -19,7 +19,12 @@ if not exist "E-Learn\frontend\.env" (
     )
 )
 
-:: Step 0c: Check frontend dependencies
+:: Step 0c: Detect Python virtual environment or system Python
+set PYTHON_EXE=python
+if exist ".venv\Scripts\python.exe" set PYTHON_EXE=.venv\Scripts\python.exe
+if exist "venv\Scripts\python.exe" set PYTHON_EXE=venv\Scripts\python.exe
+
+:: Step 0d: Check frontend dependencies
 if not exist "E-Learn\frontend\node_modules" (
     echo [Setup] Installing frontend dependencies (one-time setup)...
     pushd E-Learn\frontend
@@ -28,18 +33,10 @@ if not exist "E-Learn\frontend\node_modules" (
 )
 
 echo [1/3] Verifying and unlocking demo accounts...
-if exist ".venv\Scripts\python.exe" (
-    .venv\Scripts\python.exe scripts\demo_account_check.py
-) else (
-    python scripts\demo_account_check.py
-)
+%PYTHON_EXE% scripts\demo_account_check.py
 
 echo [2/3] Starting FastAPI Backend on port 8000...
-if exist ".venv\Scripts\python.exe" (
-    start "SIGNHEAR Backend" cmd /k ".venv\Scripts\python.exe -m uvicorn main:app --reload --port 8000"
-) else (
-    start "SIGNHEAR Backend" cmd /k "python -m uvicorn main:app --reload --port 8000"
-)
+start "SIGNHEAR Backend" cmd /k "%PYTHON_EXE% -m uvicorn main:app --reload --port 8000"
 
 echo [3/3] Starting Frontend on port 5173...
 start "SIGNHEAR Frontend" cmd /k "cd E-Learn\frontend && npm run dev"
