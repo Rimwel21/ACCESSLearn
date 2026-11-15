@@ -5,6 +5,28 @@ echo   SIGNHEAR: Grade 4 E-Learning System
 echo   Launching Backend and Frontend for Demo...
 echo ===================================================
 
+:: Step 0: Ensure backend .env exists
+if not exist ".env" (
+    echo [Setup] Backend .env file missing. Creating from .env.example...
+    copy .env.example .env >nul
+)
+
+:: Step 0b: Ensure frontend .env exists
+if not exist "E-Learn\frontend\.env" (
+    if exist "E-Learn\frontend\.env.example" (
+        echo [Setup] Frontend .env file missing. Creating from .env.example...
+        copy E-Learn\frontend\.env.example E-Learn\frontend\.env >nul
+    )
+)
+
+:: Step 0c: Check frontend dependencies
+if not exist "E-Learn\frontend\node_modules" (
+    echo [Setup] Installing frontend dependencies (one-time setup)...
+    pushd E-Learn\frontend
+    call npm install
+    popd
+)
+
 echo [1/3] Verifying and unlocking demo accounts...
 if exist ".venv\Scripts\python.exe" (
     .venv\Scripts\python.exe scripts\demo_account_check.py
@@ -34,4 +56,3 @@ echo Keep the backend and frontend terminal windows open.
 echo To stop, simply close the two opened terminal windows.
 echo ===================================================
 pause
-
